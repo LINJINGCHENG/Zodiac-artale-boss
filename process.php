@@ -53,11 +53,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         foreach ($selectedTimes as $timeSlot) {
             // 時間格式: YYYY-MM-DD_HH:00
             list($dateStr, $timeStr) = explode('_', $timeSlot);
-            
+
             // 計算週數
             $date = new DateTime($dateStr);
             $weekNumber = $date->format("W"); // ISO-8601 週數
-            
+
             // 嘗試插入時間段，忽略重複項
             $stmt = $pdo->prepare("INSERT IGNORE INTO time_slots (user_id, date_time, week_number) VALUES (?, ?, ?)");
             $stmt->execute([$userId, $timeSlot, $weekNumber]);
@@ -120,14 +120,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 <div class='time-list'>
                     <h3>您選擇的時間段：</h3>
                     <ul>";
-                    
+
         foreach ($selectedTimes as $timeSlot) {
             list($dateStr, $timeStr) = explode('_', $timeSlot);
             $date = new DateTime($dateStr);
             $formattedDate = $date->format('Y年m月d日');
             echo "<li>" . $formattedDate . " " . $timeStr . "</li>";
         }
-                    
+
         echo "</ul>
                 </div>
                 
@@ -135,13 +135,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             </div>
         </body>
         </html>";
-
     } catch (PDOException $e) {
         // 回滾事務
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
-        
+
         // 顯示錯誤信息
         die("錯誤：" . $e->getMessage());
     }
@@ -150,4 +149,3 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     header("Location: investigate.html");
     exit();
 }
-?>

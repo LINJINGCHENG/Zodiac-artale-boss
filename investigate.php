@@ -49,7 +49,7 @@ $allWeeks = [];
 for ($i = 0; $i <= 8; $i++) {
     $targetWeek = $currentWeek + $i;
     $targetYear = $currentYear;
-    
+
     // 簡單跨年處理（假設最多53週）
     if ($targetWeek > 53) {
         $targetYear++;
@@ -62,7 +62,7 @@ for ($i = 0; $i <= 8; $i++) {
             $targetWeek = $targetWeek - 52;
         }
     }
-    
+
     $allWeeks[] = $targetWeek;
 }
 
