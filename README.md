@@ -29,14 +29,14 @@ $pdo = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8", $username, $passw
 $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 ```
 
-The system uses PDO (PHP Data Objects) for secure MySQL database connections [2].
+The system uses PDO (PHP Data Objects) for secure MySQL database connections.
 
 ### Security Features
 
-- **Session Management**: Uses PHP sessions for user state management [3]
-- **Password Encryption**: Implements secure password hashing mechanisms [4]
-- **Input Validation**: Validates and sanitizes all user inputs [1]
-- **SQL Injection Protection**: Uses PDO prepared statements to prevent SQL injection attacks [2]
+- **Session Management**: Uses PHP sessions for user state management
+- **Password Encryption**: Implements secure password hashing mechanisms
+- **Input Validation**: Validates and sanitizes all user inputs
+- **SQL Injection Protection**: Uses PDO prepared statements to prevent SQL injection attacks 
 
 ### Access Control
 
@@ -72,12 +72,12 @@ The system uses PDO (PHP Data Objects) for secure MySQL database connections [2]
 
 ## Security Considerations
 
-The system implements multi-layered security protection [3]:
+The system implements multi-layered security protection:
 
 - Session-based authentication
 - PDO prepared statements to prevent SQL injection
 - Input data validation and sanitization
-- Secure password hash storage [4]
+- Secure password hash storage
 
 ## Usage Workflow
 
@@ -104,7 +104,7 @@ Please read the contribution guidelines before submitting pull requests.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the  Apache License - see the LICENSE file for details.
 
 
 
