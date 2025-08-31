@@ -86,13 +86,19 @@ $stmt = $pdo->prepare("
 $stmt->execute([$selectedWeek]);
 
 $usersBySlot = [];
+// 修復後的代碼
 foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-    $usersBySlot[$row['date_time']][] = [
+    // 將 datetime 格式轉換為標準格式
+    $dateTime = new DateTime($row['date_time']);
+    $standardKey = $dateTime->format('Y-m-d_H:i');
+    
+    $usersBySlot[$standardKey][] = [
         'user_id' => $row['user_id'],
         'name' => $row['name'],
         'account_id' => $row['account_id']
     ];
 }
+
 
 // 獲取團隊成員資訊（用於標記團隊成員）
 $teamMembers = [];
@@ -109,76 +115,93 @@ foreach ($teamStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
     }
 }
 
+
+
+
 $message = '';
 
 // 處理表單提交 - 修復刪除邏輯
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     // 刪除時段
-    if (isset($_POST['delete_selected_slots'])) {
-        $selectedSlots = $_POST['delete_slots'] ?? [];
-        $targetUserId = $_POST['target_user_id'] ?? null; // 目標用戶ID
+   // 刪除時段
+if (isset($_POST['delete_selected_slots'])) {
+    $selectedSlots = $_POST['delete_slots'] ?? [];
+    $targetUserId = $_POST['target_user_id'] ?? null;
 
-        if (!empty($selectedSlots) && $targetUserId) {
-            try {
-                $pdo->beginTransaction();
+    if (!empty($selectedSlots) && $targetUserId) {
+        try {
+            $pdo->beginTransaction();
 
+            // 獲取目標用戶的 account_id 用於權限檢查
+            $stmt = $pdo->prepare("SELECT account_id, name FROM users WHERE user_id = ?");
+            $stmt->execute([$targetUserId]);
+            $targetUser = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if (!$targetUser) {
+                throw new Exception("找不到指定的用戶");
+            }
+            
+            $targetAccountId = $targetUser['account_id'];
+            $targetUserName = $targetUser['name'];
 
+            // 修正權限檢查：使用 account_id 比較
+            if (!$isAdmin && $targetAccountId != $currentUserId) {
+                throw new Exception("權限不足：您只能刪除自己的時段");
+            }
 
-                // 驗證權限：管理員可以刪除任何人的時段，一般用戶只能刪除自己的
-                if (!$isAdmin && $targetUserId != $currentUserId) {
-                    throw new Exception("權限不足：您只能刪除自己的時段");
-                }
+            $deletedCount = 0;
 
-                $deletedCount = 0;
-
-                // 統一的刪除邏輯：只刪除指定用戶的指定時段
-                foreach ($selectedSlots as $slot) {
+            foreach ($selectedSlots as $slot) {
+                if (!$isAdmin) {
+                    // 一般用戶：雙重檢查，確保只刪除自己的時段
+                    $stmt = $pdo->prepare("
+                        DELETE ts FROM time_slots ts 
+                        JOIN users u ON ts.user_id = u.user_id 
+                        WHERE ts.date_time = ? AND ts.week_number = ? 
+                        AND ts.user_id = ? AND u.account_id = ?
+                    ");
+                    $stmt->execute([$slot, $selectedWeek, $targetUserId, $currentUserId]);
+                } else {
+                    // 管理員：可以刪除任何人的時段
                     $stmt = $pdo->prepare("
                         DELETE FROM time_slots 
                         WHERE date_time = ? AND week_number = ? AND user_id = ?
                     ");
-
-                    error_log("執行刪除SQL: DELETE FROM time_slots WHERE date_time = '$slot' AND week_number = $selectedWeek AND user_id = $targetUserId");
-
                     $stmt->execute([$slot, $selectedWeek, $targetUserId]);
-                    $rowsDeleted = $stmt->rowCount();
-                    $deletedCount += $rowsDeleted;
-
-                    error_log("時段 $slot 刪除結果: $rowsDeleted 筆記錄");
                 }
-
-                error_log("總刪除結果: 刪除了 $deletedCount 筆記錄");
-
-                // 獲取目標用戶名稱用於顯示
-                $stmt = $pdo->prepare("SELECT name FROM users WHERE user_id = ?");
-                $stmt->execute([$targetUserId]);
-                $targetUserName = $stmt->fetchColumn();
-
-                if ($deletedCount > 0) {
-                    if ($isAdmin && $targetUserId != $currentUserId) {
-                        $message = '<div class="alert success">已刪除 ' . htmlspecialchars($targetUserName) . ' 的 ' . $deletedCount . ' 個時段！</div>';
-                    } else {
-                        $message = '<div class="alert success">已刪除您的 ' . $deletedCount . ' 個時段！</div>';
-                    }
-                } else {
-                    $message = '<div class="alert error">沒有找到可刪除的時段</div>';
-                }
-
-                $pdo->commit();
-                error_log("=== 刪除操作完成 ===");
-
-                // 重新導向以刷新頁面
-                header("Location: ?mode=$currentMode&week=$selectedWeek");
-                exit();
-            } catch (Exception $e) {
-                $pdo->rollBack();
-                error_log("刪除操作失敗: " . $e->getMessage());
-                $message = '<div class="alert error">刪除失敗：' . $e->getMessage() . '</div>';
+                
+                $rowsDeleted = $stmt->rowCount();
+                $deletedCount += $rowsDeleted;
+                
+                error_log("時段 $slot 刪除結果: $rowsDeleted 筆記錄");
             }
-        } else {
-            $message = '<div class="alert error">請選擇要刪除的時段</div>';
+
+            if ($deletedCount > 0) {
+                if ($isAdmin && $targetAccountId != $currentUserId) {
+                    $message = '<div class="alert success">已刪除 ' . htmlspecialchars($targetUserName) . ' 的 ' . $deletedCount . ' 個時段！</div>';
+                } else {
+                    $message = '<div class="alert success">已刪除您的 ' . $deletedCount . ' 個時段！</div>';
+                }
+            } else {
+                $message = '<div class="alert error">沒有找到可刪除的時段</div>';
+            }
+
+            $pdo->commit();
+            
+            // 重新導向以刷新頁面
+            header("Location: ?mode=$currentMode&week=$selectedWeek");
+            exit();
+            
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            error_log("刪除操作失敗: " . $e->getMessage());
+            $message = '<div class="alert error">刪除失敗：' . $e->getMessage() . '</div>';
         }
+    } else {
+        $message = '<div class="alert error">請選擇要刪除的時段</div>';
     }
+}
+
 
     // 建立團隊
     if (isset($_POST['create_team'])) {
@@ -511,11 +534,11 @@ $jsTimeSlots = json_encode($timeSlots);
             background: #45a049;
         }
 
-        /* 團隊成員樣式 - 咖啡色字體加底線 */
-        .user-tag.team-member {
-            color: #8B4513;
-            text-decoration: underline;
-            font-weight: bold;
+       .user-tag.team-member {
+            color: #8B4513 !important;
+            text-decoration: underline !important;
+            font-weight: bold !important;
+            background: #f5f5dc !important; /* 淺咖啡色背景 */
         }
 
         .user-tag.team-member.current-user {
