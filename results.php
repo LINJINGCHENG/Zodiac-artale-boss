@@ -27,15 +27,42 @@ try {
 
 // 獲取當前週數和所有週數
 $currentWeek = (int)date('W');
-$allWeeks = $pdo->query("SELECT DISTINCT week_number FROM time_slots ORDER BY week_number")->fetchAll(PDO::FETCH_COLUMN);
-$selectedWeek = isset($_GET['week']) ? (int)$_GET['week'] : $currentWeek;
-
-if (!in_array($selectedWeek, $allWeeks) && !empty($allWeeks)) {
-    $selectedWeek = (int)$allWeeks[0];
+$currentWeekday = (int)date('w'); 
+if($currentWeekday<4){
+    $currentWeek=$currentWeek-1;
 }
-if (empty($allWeeks)) {
-    $allWeeks = [$currentWeek];
-    $selectedWeek = $currentWeek;
+
+// 從資料庫獲取現有週數
+$existingWeeks = $pdo->query("SELECT DISTINCT week_number FROM time_slots ORDER BY week_number")->fetchAll(PDO::FETCH_COLUMN);
+
+// 建立完整的週數列表（包含當前週和後面兩週）
+$allWeeks = [];
+for ($i = 0; $i <= 2; $i++) {
+    $week = $currentWeek + $i;
+    if ($week <= 53) { // 確保不超過一年的週數
+        $allWeeks[] = $week;
+    }
+}
+
+// 合併資料庫中的週數（避免遺漏現有資料）
+$allWeeks = array_unique(array_merge($allWeeks, $existingWeeks));
+sort($allWeeks);
+
+// 決定預設顯示的週數
+$defaultWeek = $currentWeek;
+if ($currentWeekday < 4) { // 如果今天是週日到週三，預設顯示上一週
+    $defaultWeek = $currentWeek - 1;
+    // 確保上一週也在選項中
+    if (!in_array($defaultWeek, $allWeeks)) {
+        array_unshift($allWeeks, $defaultWeek);
+    }
+}
+
+$selectedWeek = isset($_GET['week']) ? (int)$_GET['week'] : $defaultWeek;
+
+// 確保選中的週數在範圍內
+if (!in_array($selectedWeek, $allWeeks)) {
+    $selectedWeek = $defaultWeek;
 }
 
 $currentMode = $_GET['mode'] ?? 'view';
@@ -49,7 +76,6 @@ for ($hour = 0; $hour < 24; $hour++) {
     $timeSlots[] = "$startTime-$endTime";
 }
 
-// 計算週日期
 // 計算週日期 - 週四到週三的完整7天
 function getWeekDates($week)
 {
@@ -71,7 +97,6 @@ function getWeekDates($week)
 
     return $dates;
 }
-
 
 $weekDates = getWeekDates($selectedWeek);
 
@@ -99,7 +124,6 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
     ];
 }
 
-
 // 獲取團隊成員資訊（用於標記團隊成員）
 $teamMembers = [];
 $teamStmt = $pdo->query("
@@ -115,93 +139,88 @@ foreach ($teamStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
     }
 }
 
-
-
-
 $message = '';
 
 // 處理表單提交 - 修復刪除邏輯
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     // 刪除時段
-   // 刪除時段
-if (isset($_POST['delete_selected_slots'])) {
-    $selectedSlots = $_POST['delete_slots'] ?? [];
-    $targetUserId = $_POST['target_user_id'] ?? null;
+    if (isset($_POST['delete_selected_slots'])) {
+        $selectedSlots = $_POST['delete_slots'] ?? [];
+        $targetUserId = $_POST['target_user_id'] ?? null;
 
-    if (!empty($selectedSlots) && $targetUserId) {
-        try {
-            $pdo->beginTransaction();
+        if (!empty($selectedSlots) && $targetUserId) {
+            try {
+                $pdo->beginTransaction();
 
-            // 獲取目標用戶的 account_id 用於權限檢查
-            $stmt = $pdo->prepare("SELECT account_id, name FROM users WHERE user_id = ?");
-            $stmt->execute([$targetUserId]);
-            $targetUser = $stmt->fetch(PDO::FETCH_ASSOC);
-            
-            if (!$targetUser) {
-                throw new Exception("找不到指定的用戶");
-            }
-            
-            $targetAccountId = $targetUser['account_id'];
-            $targetUserName = $targetUser['name'];
-
-            // 修正權限檢查：使用 account_id 比較
-            if (!$isAdmin && $targetAccountId != $currentUserId) {
-                throw new Exception("權限不足：您只能刪除自己的時段");
-            }
-
-            $deletedCount = 0;
-
-            foreach ($selectedSlots as $slot) {
-                if (!$isAdmin) {
-                    // 一般用戶：雙重檢查，確保只刪除自己的時段
-                    $stmt = $pdo->prepare("
-                        DELETE ts FROM time_slots ts 
-                        JOIN users u ON ts.user_id = u.user_id 
-                        WHERE ts.date_time = ? AND ts.week_number = ? 
-                        AND ts.user_id = ? AND u.account_id = ?
-                    ");
-                    $stmt->execute([$slot, $selectedWeek, $targetUserId, $currentUserId]);
-                } else {
-                    // 管理員：可以刪除任何人的時段
-                    $stmt = $pdo->prepare("
-                        DELETE FROM time_slots 
-                        WHERE date_time = ? AND week_number = ? AND user_id = ?
-                    ");
-                    $stmt->execute([$slot, $selectedWeek, $targetUserId]);
+                // 獲取目標用戶的 account_id 用於權限檢查
+                $stmt = $pdo->prepare("SELECT account_id, name FROM users WHERE user_id = ?");
+                $stmt->execute([$targetUserId]);
+                $targetUser = $stmt->fetch(PDO::FETCH_ASSOC);
+                
+                if (!$targetUser) {
+                    throw new Exception("找不到指定的用戶");
                 }
                 
-                $rowsDeleted = $stmt->rowCount();
-                $deletedCount += $rowsDeleted;
-                
-                error_log("時段 $slot 刪除結果: $rowsDeleted 筆記錄");
-            }
+                $targetAccountId = $targetUser['account_id'];
+                $targetUserName = $targetUser['name'];
 
-            if ($deletedCount > 0) {
-                if ($isAdmin && $targetAccountId != $currentUserId) {
-                    $message = '<div class="alert success">已刪除 ' . htmlspecialchars($targetUserName) . ' 的 ' . $deletedCount . ' 個時段！</div>';
-                } else {
-                    $message = '<div class="alert success">已刪除您的 ' . $deletedCount . ' 個時段！</div>';
+                // 修正權限檢查：使用 account_id 比較
+                if (!$isAdmin && $targetAccountId != $currentUserId) {
+                    throw new Exception("權限不足：您只能刪除自己的時段");
                 }
-            } else {
-                $message = '<div class="alert error">沒有找到可刪除的時段</div>';
-            }
 
-            $pdo->commit();
-            
-            // 重新導向以刷新頁面
-            header("Location: ?mode=$currentMode&week=$selectedWeek");
-            exit();
-            
-        } catch (Exception $e) {
-            $pdo->rollBack();
-            error_log("刪除操作失敗: " . $e->getMessage());
-            $message = '<div class="alert error">刪除失敗：' . $e->getMessage() . '</div>';
+                $deletedCount = 0;
+
+                foreach ($selectedSlots as $slot) {
+                    if (!$isAdmin) {
+                        // 一般用戶：雙重檢查，確保只刪除自己的時段
+                        $stmt = $pdo->prepare("
+                            DELETE ts FROM time_slots ts 
+                            JOIN users u ON ts.user_id = u.user_id 
+                            WHERE ts.date_time = ? AND ts.week_number = ? 
+                            AND ts.user_id = ? AND u.account_id = ?
+                        ");
+                        $stmt->execute([$slot, $selectedWeek, $targetUserId, $currentUserId]);
+                    } else {
+                        // 管理員：可以刪除任何人的時段
+                        $stmt = $pdo->prepare("
+                            DELETE FROM time_slots 
+                            WHERE date_time = ? AND week_number = ? AND user_id = ?
+                        ");
+                        $stmt->execute([$slot, $selectedWeek, $targetUserId]);
+                    }
+                    
+                    $rowsDeleted = $stmt->rowCount();
+                    $deletedCount += $rowsDeleted;
+                    
+                    error_log("時段 $slot 刪除結果: $rowsDeleted 筆記錄");
+                }
+
+                if ($deletedCount > 0) {
+                    if ($isAdmin && $targetAccountId != $currentUserId) {
+                        $message = '<div class="alert success">已刪除 ' . htmlspecialchars($targetUserName) . ' 的 ' . $deletedCount . ' 個時段！</div>';
+                    } else {
+                        $message = '<div class="alert success">已刪除您的 ' . $deletedCount . ' 個時段！</div>';
+                    }
+                } else {
+                    $message = '<div class="alert error">沒有找到可刪除的時段</div>';
+                }
+
+                $pdo->commit();
+                
+                // 重新導向以刷新頁面
+                header("Location: ?mode=$currentMode&week=$selectedWeek");
+                exit();
+                
+            } catch (Exception $e) {
+                $pdo->rollBack();
+                error_log("刪除操作失敗: " . $e->getMessage());
+                $message = '<div class="alert error">刪除失敗：' . $e->getMessage() . '</div>';
+            }
+        } else {
+            $message = '<div class="alert error">請選擇要刪除的時段</div>';
         }
-    } else {
-        $message = '<div class="alert error">請選擇要刪除的時段</div>';
     }
-}
-
 
     // 建立團隊
     if (isset($_POST['create_team'])) {
@@ -280,7 +299,6 @@ $teams = $pdo->query("
     JOIN users u ON tm.user_id = u.user_id 
     GROUP BY t.id ORDER BY t.date, t.time_slot
 ")->fetchAll(PDO::FETCH_ASSOC);
-
 
 // 搜尋用戶的時段（用於刪除功能）
 $searchResults = [];
@@ -400,13 +418,36 @@ $jsTimeSlots = json_encode($timeSlots);
         .week-selector {
             text-align: center;
             margin-bottom: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
         }
 
         .week-selector select {
-            padding: 8px;
+            padding: 8px 12px;
             border: 1px solid #ddd;
             border-radius: 4px;
             font-size: 16px;
+            min-width: 250px;
+        }
+
+        .week-info {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .current-week-indicator {
+            background: #e7f3ff;
+            border: 2px solid #4CAF50;
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        .current-week-indicator strong {
+            color: #4CAF50;
         }
 
         .btn {
@@ -753,9 +794,6 @@ $jsTimeSlots = json_encode($timeSlots);
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
         }
 
-
-
-
         @media (max-width: 768px) {
             .time-grid {
                 grid-template-columns: 80px repeat(7, 1fr);
@@ -805,15 +843,76 @@ $jsTimeSlots = json_encode($timeSlots);
         <div class="week-selector">
             <select onchange="window.location.href='?mode=<?php echo $currentMode; ?>&week='+this.value;">
                 <?php foreach ($allWeeks as $week): ?>
-                    <option value="<?php echo $week; ?>" <?php echo $selectedWeek == $week ? 'selected' : ''; ?>>
-                        第 <?php echo $week; ?> 週 <?php echo $week == $currentWeek ? '(當前週)' : ''; ?>
+                    <?php
+                    $weekLabel = "第 {$week} 週";
+                    if ($week == $currentWeek) {
+                        $weekLabel .= " (當前週)";
+                    } elseif ($week == $currentWeek + 1) {
+                        $weekLabel .= " (下週)";
+                    } elseif ($week == $currentWeek + 2) {
+                        $weekLabel .= " (下下週)";
+                    } elseif ($week == $currentWeek - 1) {
+                        $weekLabel .= " (上週)";
+                    }
+                    
+                    // 檢查是否有資料
+                    $hasData = in_array($week, $existingWeeks);
+                    if (!$hasData && $week != $currentWeek) {
+                        $weekLabel .= " (無資料)";
+                    }
+                    ?>
+                    <option value="<?php echo $week; ?>"
+                                        <option value="<?php echo $week; ?>" <?php echo $selectedWeek == $week ? 'selected' : ''; ?>>
+                        <?php echo $weekLabel; ?>
                     </option>
                 <?php endforeach; ?>
             </select>
+            
+            <div class="week-info">
+                <?php 
+                $weekStartDate = new DateTime();
+                $weekStartDate->setISODate(date('Y'), $selectedWeek, 4); // 週四
+                $weekEndDate = clone $weekStartDate;
+                $weekEndDate->modify('+6 days'); // 週三
+                
+                echo "週期：" . $weekStartDate->format('m/d') . " (週四) ~ " . $weekEndDate->format('m/d') . " (週三)";
+                
+                if ($selectedWeek != $currentWeek) {
+                    if ($selectedWeek > $currentWeek) {
+                        echo " | 📅 未來第 " . ($selectedWeek - $currentWeek) . " 週";
+                    } else {
+                        echo " | 📅 過去第 " . ($currentWeek - $selectedWeek) . " 週";
+                    }
+                }
+                ?>
+            </div>
         </div>
+
+        <?php if ($selectedWeek != $currentWeek): ?>
+        <div class="current-week-indicator">
+            <strong>📅 當前查看：</strong>第 <?php echo $selectedWeek; ?> 週
+            <?php if ($selectedWeek > $currentWeek): ?>
+                <span style="color: #007bff;">(未來 <?php echo $selectedWeek - $currentWeek; ?> 週)</span>
+            <?php else: ?>
+                <span style="color: #6c757d;">(過去 <?php echo $currentWeek - $selectedWeek; ?> 週)</span>
+            <?php endif; ?>
+        </div>
+        <?php endif; ?>
 
         <?php if ($currentMode == 'view'): ?>
             <h2>📊 第 <?php echo $selectedWeek; ?> 週時間表</h2>
+            
+            <?php if (!in_array($selectedWeek, $existingWeeks)): ?>
+                <div class="alert info">
+                    <strong>📝 提示：</strong>第 <?php echo $selectedWeek; ?> 週目前沒有任何時間資料。
+                    <?php if ($selectedWeek > $currentWeek): ?>
+                        這是未來的週次，可能還沒有人填寫時間表。
+                    <?php endif; ?>
+                    <br>
+                    <a href="investigate.php?week=<?php echo $selectedWeek; ?>" class="btn btn-small">前往填寫時間表</a>
+                </div>
+            <?php endif; ?>
+            
             <div class="alert info">綠色標籤表示您的時間段，咖啡色加底線表示團隊成員。</div>
 
             <div class="time-grid">
@@ -957,7 +1056,6 @@ $jsTimeSlots = json_encode($timeSlots);
                     </div>
                 </div>
             </div>
-
 
         <?php elseif ($currentMode == 'delete'): ?>
             <h2>🗑️ 刪除時段</h2>
@@ -1143,7 +1241,6 @@ $jsTimeSlots = json_encode($timeSlots);
                 }
             });
         });
-
 
         // 載入時間段選項
         function loadTimeSlots() {

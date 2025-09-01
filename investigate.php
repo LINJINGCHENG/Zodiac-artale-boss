@@ -39,6 +39,10 @@ try {
 }
 
 $currentWeek = (int)date('W');
+$currentDate=(int)date('w');
+if($currentDate<4){
+    $currentWeek=$currentWeek-1;
+}
 $currentYear = (int)date('Y');
 $allWeeks = [];
 
