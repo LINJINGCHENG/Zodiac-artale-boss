@@ -18,17 +18,18 @@ $message = '';
 
 // 處理登入
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['login'])) {
-    $inputUsername = trim($_POST['username']);
+    $inputUserAccount = trim($_POST['user_account']);
     $inputPassword = $_POST['password'];
 
-    if (empty($inputUsername) || empty($inputPassword)) {
+    if (empty($inputUserAccount) || empty($inputPassword)) {
         $message = '<div class="alert error">請填寫帳號和密碼</div>';
     } else {
-        $stmt = $pdo->prepare("SELECT id, username, password, is_admin FROM user_accounts WHERE username = ?");
-        $stmt->execute([$inputUsername]);
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        $accountCheck = $pdo->prepare("SELECT id, account, username, password, is_admin FROM user_accounts WHERE account = ?");
+        $accountCheck->execute([$inputUserAccount]);
+        $user = $accountCheck->fetch(PDO::FETCH_ASSOC);
 
         if ($user && password_verify($inputPassword, $user['password'])) {
+            $_SESSION['account'] =$user['account'];
             $_SESSION['user_id'] = $user['id'];
             $_SESSION['username'] = $user['username'];
             $_SESSION['is_admin'] = $user['is_admin'];
@@ -170,7 +171,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['login'])) {
         <form method="POST">
             <div class="form-group">
                 <label for="username">帳號：</label>
-                <input type="text" id="username" name="username" required>
+                <input type="text" id="user_account" name="user_account" required>
             </div>
 
             <div class="form-group">
@@ -183,6 +184,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['login'])) {
 
         <div class="register-link">
             <p>還沒有帳號？ <a href="register.php">立即註冊</a></p>
+        </div>
+        <div class="register-link">
+            <p>忘記帳號或密碼帳號？ <a href="forgetAccount.php">忘記帳號或密碼</a></p>
         </div>
     </div>
 </body>
