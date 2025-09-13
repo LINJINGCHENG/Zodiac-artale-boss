@@ -34,6 +34,36 @@ if (empty($currentUserId) || empty($currentUsername)) {
   exit();
 }
 
+function getCustomWeekNumber($date) {
+    if (is_string($date)) {
+        $dateObj = new DateTime($date);
+    } else {
+        $dateObj = $date;
+    }
+    
+    $year = (int)$dateObj->format('Y');
+    
+    // 找到該年第一個週四
+    $firstThursday = new DateTime($year . '-01-01');
+    while ((int)$firstThursday->format('w') != 4) { // 4 = 週四
+        $firstThursday->add(new DateInterval('P1D'));
+    }
+    
+    // 如果日期在第一個週四之前，屬於上一年
+    if ($dateObj < $firstThursday) {
+        $prevYear = $year - 1;
+        $prevFirstThursday = new DateTime($prevYear . '-01-01');
+        while ((int)$prevFirstThursday->format('w') != 4) {
+            $prevFirstThursday->add(new DateInterval('P1D'));
+        }
+        $daysDiff = $dateObj->diff($prevFirstThursday)->days;
+    } else {
+        $daysDiff = $dateObj->diff($firstThursday)->days;
+    }
+    
+    return intval($daysDiff / 7) + 1;
+}
+
 // 生成未來14天的日期選項（從今天開始）
 function getFutureDates($days = 14) {
   $dates = [];
@@ -54,9 +84,14 @@ $futureDates = getFutureDates(14);
 
 // 時間選項（24小時制）
 $timeOptions = [];
-for ($i = 0; $i < 24; $i++) {
-  $timeOptions[] = sprintf('%02d:00', $i);
+for ($i = 0; $i <= 24; $i++) {
+  if ($i == 24) {
+      $timeOptions[] = '24:00';
+  } else {
+      $timeOptions[] = sprintf('%02d:00', $i);
+  }
 }
+
 
 $message = '';
 
@@ -113,28 +148,31 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
               $successCount = 0;
               $duplicateCount = 0;
 
-              foreach ($selectedSlots as $slot) {
-                  list($date, $time) = explode('_', $slot);
-                  
-                  // 組合成 datetime 格式
-                  $dateTime = $date . ' ' . sprintf('%02d:00:00', $time);
-                  
-                  // 計算週數（ISO 8601 週數）
-                  $weekNumber = date('W', strtotime($dateTime));
-                  
-                  // 檢查是否已存在（使用 date_time 欄位）
-                  $stmt = $pdo->prepare("SELECT id FROM time_slots WHERE user_id = ? AND date_time = ?");
-                  $stmt->execute([$userId, $dateTime]);
-                  
-                  if (!$stmt->fetch()) {
-                      // 插入新記錄
-                      $stmt = $pdo->prepare("INSERT INTO time_slots (user_id, date_time, week_number) VALUES (?, ?, ?)");
-                      $stmt->execute([$userId, $dateTime, $weekNumber]);
-                      $successCount++;
-                  } else {
-                      $duplicateCount++;
-                  }
-              }
+             
+// 然後修改你的週數計算部分：
+foreach ($selectedSlots as $slot) {
+    list($date, $time) = explode('_', $slot);
+    
+    // 組合成 datetime 格式
+    $dateTime = $date . ' ' . sprintf('%02d:00:00', $time);
+    
+    // 使用自定義週數計算（而不是 ISO 8601）
+    $weekNumber = getCustomWeekNumber($date); // 修改這裡！
+    
+    // 檢查是否已存在
+    $stmt = $pdo->prepare("SELECT id FROM time_slots WHERE user_id = ? AND date_time = ?");
+    $stmt->execute([$userId, $dateTime]);
+    
+    if (!$stmt->fetch()) {
+        // 插入新記錄
+        $stmt = $pdo->prepare("INSERT INTO time_slots (user_id, date_time, week_number) VALUES (?, ?, ?)");
+        $stmt->execute([$userId, $dateTime, $weekNumber]);
+        $successCount++;
+    } else {
+        $duplicateCount++;
+    }
+}
+
 
               $pdo->commit();
               
