@@ -25,17 +25,51 @@ try {
     die("數據庫錯誤：" . $e->getMessage());
 }
 
-// 獲取當前週數和所有週數
-$currentWeek = (int)date('W');
-$currentWeekday = (int)date('w'); 
-if($currentWeekday<4){
-    $currentWeek=$currentWeek-1;
+
+// ==================== 自定義週數計算邏輯 ====================
+
+/**
+ * 計算以週四為起始的自定義週數
+ */
+function getCustomWeekNumber($date = null)
+{
+    if ($date === null) {
+        $date = new DateTime();
+    }
+
+    $year = (int)$date->format('Y');
+
+    // 找到該年第一個週四
+    $firstThursday = new DateTime("$year-01-01");
+    while ($firstThursday->format('N') != 4) { // 4 = 週四
+        $firstThursday->modify('+1 day');
+    }
+
+    // 計算從第一個週四到目標日期的天數差
+    $daysDiff = $date->diff($firstThursday)->days;
+
+    // 如果目標日期在第一個週四之前，屬於上一年的最後幾週
+    if ($date < $firstThursday) {
+        $prevYear = $year - 1;
+        $prevFirstThursday = new DateTime("$prevYear-01-01");
+        while ($prevFirstThursday->format('N') != 4) {
+            $prevFirstThursday->modify('+1 day');
+        }
+        $daysDiff = $date->diff($prevFirstThursday)->days;
+        return floor($daysDiff / 7) + 1;
+    }
+
+    return floor($daysDiff / 7) + 1;
 }
+
+
+// 獲取當前週數和所有週數
+$currentWeek = getCustomWeekNumber($today);
 
 // 從資料庫獲取現有週數
 $existingWeeks = $pdo->query("SELECT DISTINCT week_number FROM time_slots ORDER BY week_number")->fetchAll(PDO::FETCH_COLUMN);
 
-// 建立完整的週數列表（包含當前週和後面兩週）
+// 建立完整的週數列表（只包含當前週和未來週數）
 $allWeeks = [];
 for ($i = 0; $i <= 2; $i++) {
     $week = $currentWeek + $i;
@@ -44,45 +78,47 @@ for ($i = 0; $i <= 2; $i++) {
     }
 }
 
-// 合併資料庫中的週數（避免遺漏現有資料）
-$allWeeks = array_unique(array_merge($allWeeks, $existingWeeks));
+// 只保留資料庫中當前週及未來的週數
+$futureExistingWeeks = array_filter($existingWeeks, function ($week) use ($currentWeek) {
+    return $week >= $currentWeek;
+});
+
+// 合併週數（只包含當前週及未來）
+$allWeeks = array_unique(array_merge($allWeeks, $futureExistingWeeks));
 sort($allWeeks);
 
-// 決定預設顯示的週數
-$defaultWeek = $currentWeek;
-if ($currentWeekday < 4) { // 如果今天是週日到週三，預設顯示上一週
-    $defaultWeek = $currentWeek - 1;
-    // 確保上一週也在選項中
-    if (!in_array($defaultWeek, $allWeeks)) {
-        array_unshift($allWeeks, $defaultWeek);
-    }
-}
+// 預設週數邏輯修改：不再允許顯示過去週數
+$defaultWeek = $currentWeek; // 直接使用當前週作為預設值
+
+
 
 $selectedWeek = isset($_GET['week']) ? (int)$_GET['week'] : $defaultWeek;
 
-// 確保選中的週數在範圍內
-if (!in_array($selectedWeek, $allWeeks)) {
+// 確保選中的週數在範圍內且不是過去的週數
+if (!in_array($selectedWeek, $allWeeks) || $selectedWeek < $currentWeek) {
     $selectedWeek = $defaultWeek;
 }
 
+
 $currentMode = $_GET['mode'] ?? 'view';
 
-// 時間段設定 (00:00-24:00)
-$timeSlots = [];
-for ($hour = 0; $hour < 24; $hour++) {
-    $startTime = sprintf("%02d:00", $hour);
-    $endTime = sprintf("%02d:00", $hour + 1);
-    if ($hour == 23) $endTime = "24:00";
-    $timeSlots[] = "$startTime-$endTime";
-}
 
 // 計算週日期 - 週四到週三的完整7天
 function getWeekDates($week)
 {
-    $dates = [];
-    $weekStart = new DateTime();
-    $weekStart->setISODate(date('Y'), $week, 4); // 從週四開始
+    $year = (int)date('Y');
 
+    // 找到該年第一個週四
+    $firstThursday = new DateTime("$year-01-01");
+    while ($firstThursday->format('N') != 4) {
+        $firstThursday->modify('+1 day');
+    }
+
+    // 計算指定週數的週四日期
+    $weekStart = clone $firstThursday;
+    $weekStart->modify('+' . (($week - 1) * 7) . ' days');
+
+    $dates = [];
     $dayNames = ['四', '五', '六', '日', '一', '二', '三'];
 
     for ($i = 0; $i < 7; $i++) {
@@ -97,6 +133,17 @@ function getWeekDates($week)
 
     return $dates;
 }
+
+
+// 時間段設定 (00:00-24:00)
+$timeSlots = [];
+for ($hour = 0; $hour < 24; $hour++) {
+    $startTime = sprintf("%02d:00", $hour);
+    $endTime = sprintf("%02d:00", $hour + 1);
+    if ($hour == 23) $endTime = "24:00";
+    $timeSlots[] = "$startTime-$endTime";
+}
+
 
 $weekDates = getWeekDates($selectedWeek);
 
@@ -116,7 +163,7 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
     // 將 datetime 格式轉換為標準格式
     $dateTime = new DateTime($row['date_time']);
     $standardKey = $dateTime->format('Y-m-d_H:i');
-    
+
     $usersBySlot[$standardKey][] = [
         'user_id' => $row['user_id'],
         'name' => $row['name'],
@@ -156,11 +203,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 $stmt = $pdo->prepare("SELECT account_id, name FROM users WHERE user_id = ?");
                 $stmt->execute([$targetUserId]);
                 $targetUser = $stmt->fetch(PDO::FETCH_ASSOC);
-                
+
                 if (!$targetUser) {
                     throw new Exception("找不到指定的用戶");
                 }
-                
+
                 $targetAccountId = $targetUser['account_id'];
                 $targetUserName = $targetUser['name'];
 
@@ -189,10 +236,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         ");
                         $stmt->execute([$slot, $selectedWeek, $targetUserId]);
                     }
-                    
+
                     $rowsDeleted = $stmt->rowCount();
                     $deletedCount += $rowsDeleted;
-                    
+
                     error_log("時段 $slot 刪除結果: $rowsDeleted 筆記錄");
                 }
 
@@ -207,11 +254,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 }
 
                 $pdo->commit();
-                
+
                 // 重新導向以刷新頁面
                 header("Location: ?mode=$currentMode&week=$selectedWeek");
                 exit();
-                
             } catch (Exception $e) {
                 $pdo->rollBack();
                 error_log("刪除操作失敗: " . $e->getMessage());
@@ -575,11 +621,12 @@ $jsTimeSlots = json_encode($timeSlots);
             background: #45a049;
         }
 
-       .user-tag.team-member {
+        .user-tag.team-member {
             color: #8B4513 !important;
             text-decoration: underline !important;
             font-weight: bold !important;
-            background: #f5f5dc !important; /* 淺咖啡色背景 */
+            background: #f5f5dc !important;
+            /* 淺咖啡色背景 */
         }
 
         .user-tag.team-member.current-user {
@@ -851,57 +898,60 @@ $jsTimeSlots = json_encode($timeSlots);
                         $weekLabel .= " (下週)";
                     } elseif ($week == $currentWeek + 2) {
                         $weekLabel .= " (下下週)";
-                    } elseif ($week == $currentWeek - 1) {
-                        $weekLabel .= " (上週)";
+                    } elseif ($week > $currentWeek + 2) {
+                        $weekLabel .= " (未來第 " . ($week - $currentWeek) . " 週)";
                     }
-                    
+
                     // 檢查是否有資料
                     $hasData = in_array($week, $existingWeeks);
                     if (!$hasData && $week != $currentWeek) {
                         $weekLabel .= " (無資料)";
                     }
                     ?>
+
                     <option value="<?php echo $week; ?>"
-                                        <option value="<?php echo $week; ?>" <?php echo $selectedWeek == $week ? 'selected' : ''; ?>>
+                        <option value="<?php echo $week; ?>" <?php echo $selectedWeek == $week ? 'selected' : ''; ?>>
                         <?php echo $weekLabel; ?>
                     </option>
                 <?php endforeach; ?>
             </select>
-            
+
             <div class="week-info">
-                <?php 
-                $weekStartDate = new DateTime();
-                $weekStartDate->setISODate(date('Y'), $selectedWeek, 4); // 週四
+                <?php
+                $year = (int)date('Y');
+                $firstThursday = new DateTime("$year-01-01");
+                while ($firstThursday->format('N') != 4) {
+                    $firstThursday->modify('+1 day');
+                }
+                $weekStartDate = clone $firstThursday;
+                $weekStartDate->modify('+' . (($selectedWeek - 1) * 7) . ' days');
                 $weekEndDate = clone $weekStartDate;
                 $weekEndDate->modify('+6 days'); // 週三
-                
+
                 echo "週期：" . $weekStartDate->format('m/d') . " (週四) ~ " . $weekEndDate->format('m/d') . " (週三)";
-                
+
                 if ($selectedWeek != $currentWeek) {
-                    if ($selectedWeek > $currentWeek) {
-                        echo " | 📅 未來第 " . ($selectedWeek - $currentWeek) . " 週";
-                    } else {
-                        echo " | 📅 過去第 " . ($currentWeek - $selectedWeek) . " 週";
-                    }
+                    echo " | 📅 未來第 " . ($selectedWeek - $currentWeek) . " 週";
                 }
+
                 ?>
             </div>
         </div>
 
         <?php if ($selectedWeek != $currentWeek): ?>
-        <div class="current-week-indicator">
-            <strong>📅 當前查看：</strong>第 <?php echo $selectedWeek; ?> 週
-            <?php if ($selectedWeek > $currentWeek): ?>
-                <span style="color: #007bff;">(未來 <?php echo $selectedWeek - $currentWeek; ?> 週)</span>
-            <?php else: ?>
-                <span style="color: #6c757d;">(過去 <?php echo $currentWeek - $selectedWeek; ?> 週)</span>
-            <?php endif; ?>
-        </div>
+            <div class="current-week-indicator">
+                <strong>📅 當前查看：</strong>第 <?php echo $selectedWeek; ?> 週
+                <?php if ($selectedWeek > $currentWeek): ?>
+                    <span style="color: #007bff;">(未來 <?php echo $selectedWeek - $currentWeek; ?> 週)</span>
+                <?php else: ?>
+                    <span style="color: #6c757d;">(過去 <?php echo $currentWeek - $selectedWeek; ?> 週)</span>
+                <?php endif; ?>
+            </div>
         <?php endif; ?>
 
         <?php if ($currentMode == 'view'): ?>
             <h2>📊 第 <?php echo $selectedWeek; ?> 週時間表</h2>
-            
+
             <?php if (!in_array($selectedWeek, $existingWeeks)): ?>
                 <div class="alert info">
                     <strong>📝 提示：</strong>第 <?php echo $selectedWeek; ?> 週目前沒有任何時間資料。
@@ -912,7 +962,7 @@ $jsTimeSlots = json_encode($timeSlots);
                     <a href="investigate.php?week=<?php echo $selectedWeek; ?>" class="btn btn-small">前往填寫時間表</a>
                 </div>
             <?php endif; ?>
-            
+
             <div class="alert info">綠色標籤表示您的時間段，咖啡色加底線表示團隊成員。</div>
 
             <div class="time-grid">
