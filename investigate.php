@@ -1,6 +1,9 @@
 <?php
 session_start();
 
+// 設定台灣時區
+date_default_timezone_set('Asia/Taipei');
+
 // 檢查登入狀態
 if (!isset($_SESSION['user_id'])) {
   header("Location: login.php");
@@ -31,96 +34,39 @@ if (empty($currentUserId) || empty($currentUsername)) {
   exit();
 }
 
-// 獲取所有週數 - 修改為包含未來週數
-try {
-  $existingWeeks = $pdo->query("SELECT DISTINCT week_number FROM time_slots ORDER BY week_number")->fetchAll(PDO::FETCH_COLUMN);
-} catch (PDOException $e) {
-  $existingWeeks = [];
-}
-
-$currentWeek = (int)date('W');
-$currentDate=(int)date('w');
-if($currentDate<4){
-    $currentWeek=$currentWeek-1;
-}
-$currentYear = (int)date('Y');
-$allWeeks = [];
-
-for ($i = 0; $i <= 8; $i++) {
-  $targetWeek = $currentWeek + $i;
-  $targetYear = $currentYear;
-
-  // 簡單跨年處理（假設最多53週）
-  if ($targetWeek > 53) {
-      $targetYear++;
-      $targetWeek = $targetWeek - 53;
-  } elseif ($targetWeek > 52) {
-      // 檢查當年是否真的有第53週
-      $dec28 = strtotime("December 28, $targetYear");
-      if (date('W', $dec28) < 53) {
-          $targetYear++;
-          $targetWeek = $targetWeek - 52;
-      }
-  }
-
-  $allWeeks[] = $targetWeek;
-}
-
-// 合併現有週數和生成的週數，去重並排序
-$allWeeks = array_unique(array_merge($allWeeks, $existingWeeks));
-sort($allWeeks);
-
-$selectedWeek = isset($_GET['week']) ? (int)$_GET['week'] : $currentWeek;
-
-// 如果選擇的週數不在列表中，添加它
-if (!in_array($selectedWeek, $allWeeks)) {
-  $allWeeks[] = $selectedWeek;
-  sort($allWeeks);
-}
-
-// 時間段設定
-$timeSlots = [
-  "00:00-01:00", "01:00-02:00", "02:00-03:00", "03:00-04:00",
-  "04:00-05:00", "05:00-06:00", "06:00-07:00", "07:00-08:00",
-  "08:00-09:00", "09:00-10:00", "10:00-11:00", "11:00-12:00",
-  "12:00-13:00", "13:00-14:00", "14:00-15:00", "15:00-16:00",
-  "16:00-17:00", "17:00-18:00", "18:00-19:00", "19:00-20:00",
-  "20:00-21:00", "21:00-22:00", "22:00-23:00", "23:00-24:00"
-];
-
-// 計算週日期 - 週四到週三的完整7天
-function getWeekDates($week)
-{
+// 生成未來14天的日期選項（從今天開始）
+function getFutureDates($days = 14) {
   $dates = [];
-  $weekStart = new DateTime();
-  $weekStart->setISODate(date('Y'), $week, 4); // 從週四開始
-
-  $dayNames = ['四', '五', '六', '日', '一', '二', '三'];
-
-  for ($i = 0; $i < 7; $i++) {
-      $date = clone $weekStart;
+  for ($i = 0; $i <= $days; $i++) {
+      $date = new DateTime('now', new DateTimeZone('Asia/Taipei'));
       $date->modify("+$i days");
-      $dates[$i + 1] = [
+      $dates[] = [
           'dateStr' => $date->format('Y-m-d'),
-          'dayText' => $dayNames[$i],
-          'display' => $date->format('m/d')
+          'display' => $date->format('m/d'),
+          'dayName' => ['日', '一', '二', '三', '四', '五', '六'][$date->format('w')],
+          'fullDisplay' => $date->format('m/d') . ' (週' . ['日', '一', '二', '三', '四', '五', '六'][$date->format('w')] . ')'
       ];
   }
-
   return $dates;
 }
 
-$weekDates = getWeekDates($selectedWeek);
+$futureDates = getFutureDates(14);
+
+// 時間選項（24小時制）
+$timeOptions = [];
+for ($i = 0; $i < 24; $i++) {
+  $timeOptions[] = sprintf('%02d:00', $i);
+}
+
 $message = '';
 
-// 處理表單提交 - 修改為累加模式
-// 處理表單提交 - 使用 INSERT IGNORE 避免 SQL 錯誤
+// 處理表單提交
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
   $selectedSlots = $_POST['time_slots'] ?? [];
   $clearMode = isset($_POST['clear_all']); // 清除模式
 
   if ($clearMode) {
-      // 清除模式：刪除該用戶在該週的所有記錄
+      // 清除模式：刪除該用戶的所有記錄
       try {
           $pdo->beginTransaction();
 
@@ -131,634 +77,749 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
           $deletedCount = 0;
           if ($existingUser) {
-              $stmt = $pdo->prepare("DELETE FROM time_slots WHERE user_id = ? AND week_number = ?");
-              $stmt->execute([$existingUser['user_id'], $selectedWeek]);
+              $stmt = $pdo->prepare("DELETE FROM time_slots WHERE user_id = ?");
+              $stmt->execute([$existingUser['user_id']]);
               $deletedCount = $stmt->rowCount();
           }
 
           $pdo->commit();
-          $message = '<div class="alert success">🗑️ 已清除您在第 ' . $selectedWeek . ' 週的所有時間安排！（共 ' . $deletedCount . ' 個時段）</div>';
-      } catch (Exception $e) {
+          $message = '<div class="alert success">🗑️ 已清除您的所有時間安排！（共 ' . $deletedCount . ' 筆記錄）</div>';
+      } catch (PDOException $e) {
           $pdo->rollBack();
-          error_log("清除失敗: " . $e->getMessage());
-          $message = '<div class="alert error">❌ 清除失敗：' . $e->getMessage() . '</div>';
-      }
-  } elseif (!empty($selectedSlots)) {
-      // 安全累加模式：使用 INSERT IGNORE 或 ON DUPLICATE KEY
-      try {
-          $pdo->beginTransaction();
-
-          // 檢查或創建用戶記錄
-          $stmt = $pdo->prepare("SELECT user_id, name FROM users WHERE account_id = ?");
-          $stmt->execute([$currentUserId]);
-          $existingUser = $stmt->fetch(PDO::FETCH_ASSOC);
-
-          if (!$existingUser) {
-              // 處理用戶名重複問題
-              $stmt = $pdo->prepare("SELECT user_id, account_id FROM users WHERE name = ?");
-              $stmt->execute([$currentUsername]);
-              $duplicateNameUser = $stmt->fetch(PDO::FETCH_ASSOC);
-
-              if ($duplicateNameUser) {
-                  $baseUsername = $currentUsername;
-                  $counter = 1;
-                  do {
-                      $newUsername = $baseUsername . '_' . $counter;
-                      $stmt = $pdo->prepare("SELECT user_id FROM users WHERE name = ?");
-                      $stmt->execute([$newUsername]);
-                      $counter++;
-                  } while ($stmt->fetch());
-                  $finalUsername = $newUsername;
-                  error_log("用戶名重複，使用新名稱: $finalUsername");
-              } else {
-                  $finalUsername = $currentUsername;
-              }
-
-              $stmt = $pdo->prepare("INSERT INTO users (name, account_id) VALUES (?, ?)");
-              $stmt->execute([$finalUsername, $currentUserId]);
-              $userRecordId = $pdo->lastInsertId();
-          } else {
-              $userRecordId = $existingUser['user_id'];
-              
-              // 更新用戶名（如果需要且不重複）
-              if ($existingUser['name'] !== $currentUsername) {
-                  $stmt = $pdo->prepare("SELECT user_id FROM users WHERE name = ? AND user_id != ?");
-                  $stmt->execute([$currentUsername, $userRecordId]);
-                  if (!$stmt->fetch()) {
-                      $stmt = $pdo->prepare("UPDATE users SET name = ? WHERE user_id = ?");
-                      $stmt->execute([$currentUsername, $userRecordId]);
-                  }
-              }
-          }
-
-          // 方法1：使用 INSERT IGNORE（推薦）
-          $insertCount = 0;
-          $totalSlots = count($selectedSlots);
-          
-          try {
-              // 先計算現有時段數量
-              $stmt = $pdo->prepare("SELECT COUNT(*) FROM time_slots WHERE user_id = ? AND week_number = ?");
-              $stmt->execute([$userRecordId, $selectedWeek]);
-              $beforeCount = $stmt->fetchColumn();
-
-              // 使用 INSERT IGNORE 批量插入，自動忽略重複
-              $placeholders = str_repeat('(?,?,?),', count($selectedSlots));
-              $placeholders = rtrim($placeholders, ',');
-              
-              $sql = "INSERT IGNORE INTO time_slots (user_id, date_time, week_number) VALUES $placeholders";
-              $stmt = $pdo->prepare($sql);
-              
-              $params = [];
-              foreach ($selectedSlots as $slot) {
-                  $params[] = $userRecordId;
-                  $params[] = $slot;
-                  $params[] = $selectedWeek;
-              }
-              
-              $stmt->execute($params);
-              
-              // 計算實際插入的數量
-              $stmt = $pdo->prepare("SELECT COUNT(*) FROM time_slots WHERE user_id = ? AND week_number = ?");
-              $stmt->execute([$userRecordId, $selectedWeek]);
-              $afterCount = $stmt->fetchColumn();
-              
-              $insertCount = $afterCount - $beforeCount;
-              
-          } catch (Exception $e) {
-              // 如果 INSERT IGNORE 不支援，使用逐個檢查的方法
-              error_log("INSERT IGNORE 失敗，使用備用方法: " . $e->getMessage());
-              
-              // 備用方法：逐個檢查並插入
-              $stmt = $pdo->prepare("SELECT date_time FROM time_slots WHERE user_id = ? AND week_number = ?");
-              $stmt->execute([$userRecordId, $selectedWeek]);
-              $existingSlots = $stmt->fetchAll(PDO::FETCH_COLUMN);
-
-              $stmt = $pdo->prepare("INSERT INTO time_slots (user_id, date_time, week_number) VALUES (?, ?, ?)");
-              
-              foreach ($selectedSlots as $slot) {
-                  if (!in_array($slot, $existingSlots)) {
-                      try {
-                          $stmt->execute([$userRecordId, $slot, $selectedWeek]);
-                          $insertCount++;
-                      } catch (Exception $insertError) {
-                          // 即使單個插入失敗也繼續處理其他時段
-                          error_log("插入時段失敗: $slot - " . $insertError->getMessage());
-                      }
-                  }
-              }
-          }
-
-          $pdo->commit();
-          
-          // 友善的反饋訊息
-          if ($insertCount > 0) {
-              $message = '<div class="alert success">✅ 成功新增 ' . $insertCount . ' 個時間段！</div>';
-          } else {
-              $message = '<div class="alert info">📋 時間安排已確認！所選時段都已在您的安排中。</div>';
-          }
-          
-      } catch (Exception $e) {
-          $pdo->rollBack();
-          error_log("提交失敗: " . $e->getMessage());
-          // 即使發生錯誤，也給用戶友善的提示
-          $message = '<div class="alert info">⚠️ 時間安排處理完成，請檢查您的選擇是否正確顯示。</div>';
+          $message = '<div class="alert error">❌ 清除失敗：' . htmlspecialchars($e->getMessage()) . '</div>';
       }
   } else {
-      // 空選擇的友善提示
-      $message = '<div class="alert info">💡 您可以選擇要新增的時間段，或直接查看現有安排。</div>';
+      // 正常提交模式
+      if (empty($selectedSlots)) {
+          $message = '<div class="alert error">❌ 請至少選擇一個時間段！</div>';
+      } else {
+          try {
+              $pdo->beginTransaction();
+
+              // 檢查或創建用戶記錄
+              $stmt = $pdo->prepare("SELECT user_id FROM users WHERE account_id = ?");
+              $stmt->execute([$currentUserId]);
+              $existingUser = $stmt->fetch(PDO::FETCH_ASSOC);
+
+              if ($existingUser) {
+                  $userId = $existingUser['user_id'];
+              } else {
+                  // 創建新用戶記錄，注意這裡使用 name 欄位而不是 username
+                  $stmt = $pdo->prepare("INSERT INTO users (account_id, name) VALUES (?, ?)");
+                  $stmt->execute([$currentUserId, $currentUsername]);
+                  $userId = $pdo->lastInsertId();
+              }
+
+              $successCount = 0;
+              $duplicateCount = 0;
+
+              foreach ($selectedSlots as $slot) {
+                  list($date, $time) = explode('_', $slot);
+                  
+                  // 組合成 datetime 格式
+                  $dateTime = $date . ' ' . sprintf('%02d:00:00', $time);
+                  
+                  // 計算週數（ISO 8601 週數）
+                  $weekNumber = date('W', strtotime($dateTime));
+                  
+                  // 檢查是否已存在（使用 date_time 欄位）
+                  $stmt = $pdo->prepare("SELECT id FROM time_slots WHERE user_id = ? AND date_time = ?");
+                  $stmt->execute([$userId, $dateTime]);
+                  
+                  if (!$stmt->fetch()) {
+                      // 插入新記錄
+                      $stmt = $pdo->prepare("INSERT INTO time_slots (user_id, date_time, week_number) VALUES (?, ?, ?)");
+                      $stmt->execute([$userId, $dateTime, $weekNumber]);
+                      $successCount++;
+                  } else {
+                      $duplicateCount++;
+                  }
+              }
+
+              $pdo->commit();
+              
+              $message = '<div class="alert success">✅ 時間安排提交成功！';
+              if ($successCount > 0) {
+                  $message .= ' 新增 ' . $successCount . ' 個時段。';
+              }
+              if ($duplicateCount > 0) {
+                  $message .= ' 跳過 ' . $duplicateCount . ' 個重複時段。';
+              }
+              $message .= '</div>';
+
+          } catch (PDOException $e) {
+              $pdo->rollBack();
+              $message = '<div class="alert error">❌ 提交失敗：' . htmlspecialchars($e->getMessage()) . '</div>';
+          }
+      }
   }
 }
-// 獲取用戶已選擇的時間段
+
+// 獲取用戶已選擇的時段
 $userSelectedSlots = [];
 try {
   $stmt = $pdo->prepare("
-      SELECT t.date_time 
-      FROM time_slots t 
-      JOIN users u ON t.user_id = u.user_id 
-      WHERE u.account_id = ? AND t.week_number = ?
+      SELECT DATE(ts.date_time) as date_part, HOUR(ts.date_time) as hour_part
+      FROM time_slots ts 
+      JOIN users u ON ts.user_id = u.user_id 
+      WHERE u.account_id = ?
   ");
-  $stmt->execute([$currentUserId, $selectedWeek]);
-  $userSelectedSlots = $stmt->fetchAll(PDO::FETCH_COLUMN);
+  $stmt->execute([$currentUserId]);
+  $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+  
+  foreach ($results as $row) {
+      $userSelectedSlots[] = $row['date_part'] . '_' . $row['hour_part'];
+  }
 } catch (PDOException $e) {
-  error_log("獲取用戶選擇失敗: " . $e->getMessage());
+  // 處理錯誤，但不中斷程式
+  $message .= '<div class="alert info">🔍 查詢現有記錄時發生錯誤：' . htmlspecialchars($e->getMessage()) . '</div>';
 }
 ?>
 
 <!DOCTYPE html>
 <html lang="zh-TW">
-
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>拉圖斯時間調查表單</title>
-  <style>
-      * {
-          box-sizing: border-box;
-      }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>拉圖斯時間調查表單</title>
+<style>
+  * {
+      box-sizing: border-box;
+  }
 
-      body {
-          font-family: 'Microsoft JhengHei', Arial, sans-serif;
-          margin: 0;
-          padding: 20px;
-          background: #f5f5f5;
-      }
+  body {
+      font-family: 'Microsoft JhengHei', Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #f5f5f5;
+  }
 
-      .container {
-          max-width: 1200px;
-          margin: 0 auto;
-          background: white;
-          padding: 20px;
-          border-radius: 8px;
-          box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-      }
+  .container {
+      max-width: 1000px;
+      margin: 0 auto;
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  }
 
-      h1 {
-          text-align: center;
-          color: #333;
-          margin-bottom: 10px;
-      }
+  h1 {
+      text-align: center;
+      color: #333;
+      margin-bottom: 10px;
+  }
 
-      .user-info {
-          background: #e7f3ff;
-          padding: 15px;
-          border-radius: 8px;
-          margin-bottom: 20px;
-          text-align: center;
-          border: 1px solid #b3d9ff;
-      }
+  .user-info {
+      background: #e7f3ff;
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      text-align: center;
+      border: 1px solid #b3d9ff;
+  }
 
-      .user-info p {
-          margin: 0;
-          font-size: 16px;
-          color: #0066cc;
-      }
+  .user-info p {
+      margin: 0;
+      font-size: 16px;
+      color: #0066cc;
+  }
 
-      .admin-badge {
-          background: #ff6b6b;
-          color: white;
-          padding: 2px 8px;
-          border-radius: 12px;
-          font-size: 12px;
-          margin-left: 10px;
-      }
+  .admin-badge {
+      background: #ff6b6b;
+      color: white;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 12px;
+      margin-left: 10px;
+  }
 
-      .user-badge {
-          background: #4CAF50;
-          color: white;
-          padding: 2px 8px;
-          border-radius: 12px;
-          font-size: 12px;
-          margin-left: 10px;
-      }
+  .user-badge {
+      background: #4CAF50;
+      color: white;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 12px;
+      margin-left: 10px;
+  }
 
-      .btn {
-          display: inline-block;
-          padding: 6px 12px;
-          background: #4CAF50;
-          color: white;
-          text-decoration: none;
-          border: none;
-          border-radius: 4px;
-          cursor: pointer;
-          font-size: 12px;
-          margin-left: 10px;
-      }
+  .btn {
+      display: inline-block;
+      padding: 6px 12px;
+      background: #4CAF50;
+      color: white;
+      text-decoration: none;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      margin-left: 10px;
+  }
 
-      .btn:hover {
-          background: #45a049;
-      }
+  .btn:hover {
+      background: #45a049;
+  }
 
-      .btn.btn-small {
-          padding: 4px 8px;
-          font-size: 11px;
-      }
+  .btn.btn-small {
+      padding: 4px 8px;
+      font-size: 11px;
+  }
 
-      .btn.btn-primary {
-          background: #007bff;
-      }
+  .btn.btn-primary {
+      background: #007bff;
+  }
 
-      .btn.btn-primary:hover {
-          background: #0056b3;
-      }
+  .btn.btn-primary:hover {
+      background: #0056b3;
+  }
 
-      .week-selector {
-          text-align: center;
-          margin-bottom: 20px;
-      }
+  .alert {
+      padding: 15px;
+      margin-bottom: 20px;
+      border-radius: 4px;
+      font-weight: bold;
+  }
 
-      .week-selector select {
-          padding: 8px;
-          border: 1px solid #ddd;
-          border-radius: 4px;
-          font-size: 16px;
-      }
+  .alert.success {
+      background: #dff0d8;
+      color: #3c763d;
+      border: 1px solid #d6e9c6;
+  }
 
-      .alert {
-          padding: 15px;
-          margin-bottom: 20px;
-          border-radius: 4px;
-          font-weight: bold;
-      }
+  .alert.error {
+      background: #f2dede;
+      color: #a94442;
+      border: 1px solid #ebccd1;
+  }
 
-      .alert.success {
-          background: #dff0d8;
-          color: #3c763d;
-          border: 1px solid #d6e9c6;
-      }
+  .alert.info {
+      background: #d9edf7;
+      color: #31708f;
+      border: 1px solid #bce8f1;
+  }
 
-      .alert.error {
-          background: #f2dede;
-          color: #a94442;
-          border: 1px solid #ebccd1;
-      }
+  .instructions {
+      background: #fff3cd;
+      padding: 15px;
+      margin-bottom: 20px;
+      border-radius: 4px;
+      border: 1px solid #ffeaa7;
+  }
 
-      .alert.info {
-          background: #d9edf7;
-          color: #31708f;
-          border: 1px solid #bce8f1;
-      }
+  .instructions h3 {
+      margin-top: 0;
+      color: #856404;
+  }
 
-      .time-grid {
-          display: grid;
-          grid-template-columns: 100px repeat(7, 1fr);
-          gap: 1px;
-          margin: 20px 0;
-          font-size: 14px;
-      }
+  .instructions ul {
+      margin: 10px 0;
+      padding-left: 20px;
+  }
 
-      .time-header {
-          background: #f2f2f2;
-          padding: 10px;
-          text-align: center;
-          font-weight: bold;
-          border: 1px solid #ddd;
-      }
+  .instructions li {
+      margin: 5px 0;
+      color: #856404;
+  }
 
-      .time-slot {
-          border: 1px solid #ddd;
-          padding: 8px;
-          min-height: 50px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          transition: all 0.2s;
-          position: relative;
-      }
+  .date-time-selector {
+      background: #f8f9fa;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 20px 0;
+      border: 1px solid #dee2e6;
+  }
 
-      .time-slot:hover {
-          background: #e9e9e9;
-      }
+  .selector-row {
+      display: flex;
+      align-items: center;
+      margin-bottom: 15px;
+      gap: 15px;
+      flex-wrap: wrap;
+  }
 
-      .time-label {
-          background: #f9f9f9;
-          font-weight: bold;
-      }
+  .selector-row label {
+      font-weight: bold;
+      min-width: 100px;
+      color: #495057;
+  }
 
-      .time-label:hover {
-          background: #f9f9f9;
-      }
+  .selector-row select {
+      padding: 8px 12px;
+      border: 1px solid #ced4da;
+      border-radius: 4px;
+      font-size: 14px;
+      background: white;
+      min-width: 150px;
+  }
 
-      .time-slot input[type="checkbox"] {
-          width: 20px;
-          height: 20px;
-          cursor: pointer;
-          transform: scale(1.2);
-      }
+  .generate-btn {
+      padding: 10px 20px;
+      background: #28a745;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      margin-top: 10px;
+  }
 
-      .time-slot input[type="checkbox"]:checked {
-          accent-color: #4CAF50;
-      }
+  .generate-btn:hover {
+      background: #218838;
+  }
 
-      .time-slot.selected {
-          background: #e8f5e8;
-          border-color: #4CAF50;
-      }
+  .generate-btn:disabled {
+      background: #6c757d;
+      cursor: not-allowed;
+  }
 
-      .time-slot.already-selected {
-          background: #fff3cd;
-          border-color: #ffc107;
-      }
+  .time-table-container {
+      margin: 20px 0;
+      display: none;
+  }
 
-      .submit-section {
-          text-align: center;
-          margin-top: 30px;
-          padding: 20px;
-          background: #f8f9fa;
-          border-radius: 8px;
-      }
+  .time-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 15px;
+  }
 
-      .submit-btn {
-          padding: 15px 30px;
-          background: #007bff;
-          color: white;
-          border: none;
-          border-radius: 6px;
-          font-size: 18px;
-          cursor: pointer;
-          margin: 0 10px;
-      }
+  .time-table th,
+  .time-table td {
+      border: 1px solid #dee2e6;
+      padding: 8px;
+      text-align: center;
+      vertical-align: middle;
+  }
 
-      .submit-btn:hover {
-          background: #0056b3;
-      }
+  .time-table th {
+      background: #f8f9fa;
+      font-weight: bold;
+      color: #495057;
+  }
 
-      .clear-btn {
-          padding: 15px 30px;
-          background: #dc3545;
-          color: white;
-          border: none;
-          border-radius: 6px;
-          font-size: 18px;
-          cursor: pointer;
-          margin: 0 10px;
-      }
+  .time-table td {
+      background: white;
+  }
 
-      .clear-btn:hover {
-          background: #c82333;
-      }
+  .time-table td.existing {
+      background: #fff3cd;
+  }
 
-      .instructions {
-          background: #fff3cd;
-          padding: 15px;
-          margin-bottom: 20px;
-          border-radius: 4px;
-          border: 1px solid #ffeaa7;
-      }
+  .time-table input[type="checkbox"] {
+      transform: scale(1.2);
+      cursor: pointer;
+  }
 
-      .instructions h3 {
-          margin-top: 0;
-          color: #856404;
-      }
+  .time-table input[type="checkbox"]:disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+  }
 
-      .instructions ul {
-          margin: 10px 0;
-          padding-left: 20px;
-      }
+  .existing-label {
+      color: #856404;
+      font-weight: bold;
+      font-size: 12px;
+      display: block;
+      margin-top: 2px;
+  }
 
-      .instructions li {
-          margin: 5px 0;
-          color: #856404;
-      }
+  .table-legend {
+      margin-top: 10px;
+      display: flex;
+      gap: 20px;
+      font-size: 14px;
+  }
 
-      .selected-count {
-          margin-top: 20px;
-          text-align: center;
-          font-size: 16px;
-          color: #333;
-      }
+  .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+  }
 
-      .count-number {
-          font-weight: bold;
-          color: #007bff;
-      }
+  .legend-color {
+      width: 20px;
+      height: 20px;
+      border: 1px solid #dee2e6;
+  }
 
-      .batch-operations {
-          text-align: center;
-          margin: 20px 0;
-          padding: 15px;
-          background: #f8f9fa;
-          border-radius: 8px;
-      }
+  .legend-color.available {
+      background: white;
+  }
 
-      .batch-btn {
-          padding: 8px 16px;
-          margin: 0 5px;
-          background: #6c757d;
-          color: white;
-          border: none;
-          border-radius: 4px;
-          cursor: pointer;
-          font-size: 14px;
-      }
+  .legend-color.existing {
+      background: #fff3cd;
+  }
 
-      .batch-btn:hover {
-          background: #5a6268;
-      }
+  .batch-operations {
+      text-align: center;
+      margin: 20px 0;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 8px;
+  }
 
-      .batch-btn.select-all {
-          background: #28a745;
-      }
+  .batch-btn {
+      padding: 8px 16px;
+      margin: 0 5px;
+      background: #6c757d;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+  }
 
-      .batch-btn.select-all:hover {
-          background: #218838;
-      }
+  .batch-btn:hover {
+      background: #5a6268;
+  }
 
-      .batch-btn.clear-all {
-          background: #dc3545;
-      }
+  .batch-btn.select-all {
+      background: #28a745;
+  }
 
-      .batch-btn.clear-all:hover {
-          background: #c82333;
-      }
+  .batch-btn.select-all:hover {
+      background: #218838;
+  }
 
-      .mode-info {
-          background: #d1ecf1;
-          padding: 10px 15px;
-          margin-bottom: 20px;
-          border-radius: 4px;
-          border: 1px solid #bee5eb;
-          color: #0c5460;
-          text-align: center;
-      }
-  </style>
+  .batch-btn.clear-selection {
+      background: #dc3545;
+  }
+
+  .batch-btn.clear-selection:hover {
+      background: #c82333;
+  }
+
+  .submit-section {
+      text-align: center;
+      margin-top: 30px;
+      padding: 20px;
+      background: #f8f9fa;
+      border-radius: 8px;
+  }
+
+  .submit-btn {
+      padding: 15px 30px;
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 18px;
+      cursor: pointer;
+      margin: 0 10px;
+  }
+
+  .submit-btn:hover {
+      background: #0056b3;
+  }
+
+  .clear-btn {
+      padding: 15px 30px;
+      background: #dc3545;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 18px;
+      cursor: pointer;
+      margin: 0 10px;
+  }
+
+  .clear-btn:hover {
+      background: #c82333;
+  }
+
+  .selected-count {
+      margin-top: 20px;
+      text-align: center;
+      font-size: 16px;
+      color: #333;
+  }
+
+  .count-number {
+      font-weight: bold;
+      color: #007bff;
+  }
+
+  .current-time-info {
+      background: #d4edda;
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 15px;
+      text-align: center;
+      border: 1px solid #c3e6cb;
+      color: #155724;
+  }
+
+  .db-info {
+      background: #f8f9fa;
+      padding: 15px;
+      margin-bottom: 20px;
+      border-radius: 4px;
+      border: 1px solid #dee2e6;
+      font-family: monospace;
+      font-size: 12px;
+  }
+</style>
 </head>
 
 <body>
-  <div class="container">
-      <h1>拉圖斯時間調查表單</h1>
+<div class="container">
+  <h1>拉圖斯時間調查表單</h1>
 
-      <div class="user-info">
-          <p>歡迎，<?php echo htmlspecialchars($currentUsername); ?>！
-              <?php if ($isAdmin): ?>
-                  <span class="admin-badge">管理員</span>
-              <?php else: ?>
-                  <span class="user-badge">一般用戶</span>
-              <?php endif; ?>
-              <a href="logout.php" class="btn btn-small">登出</a>
-              <a href="results.php" class="btn btn-small btn-primary">查看結果</a>
-          </p>
-      </div>
+  <div class="user-info">
+      <p>歡迎，<?php echo htmlspecialchars($currentUsername); ?>！
+          <?php if ($isAdmin): ?>
+              <span class="admin-badge">管理員</span>
+          <?php else: ?>
+              <span class="user-badge">一般用戶</span>
+          <?php endif; ?>
+          <a href="logout.php" class="btn btn-small">登出</a>
+          <a href="results.php" class="btn btn-small btn-primary">查看結果</a>
+      </p>
+  </div>
+  <?php echo $message; ?>
 
-      <?php echo $message; ?>
-
-      <div class="week-selector">
-          <select onchange="window.location.href='?week='+this.value;">
-              <?php foreach ($allWeeks as $week): ?>
-                  <option value="<?php echo $week; ?>" <?php echo $selectedWeek == $week ? 'selected' : ''; ?>>
-                      第 <?php echo $week; ?> 週 <?php echo $week == $currentWeek ? '(當前週)' : ''; ?>
-                  </option>
-              <?php endforeach; ?>
-          </select>
-      </div>
-
-
-      <div class="instructions">
-          <h3>📋 填寫說明</h3>
-          <ul>
-              <li>請勾選您在第 <strong><?php echo $selectedWeek; ?></strong> 週<strong>新增</strong>的有空時間段</li>
-              <li>黃色背景的時段表示您已經選擇過的時間</li>
-              <li><strong>新選擇的時段會累加到現有時段中</strong></li>
-              <li>如需清除所有時段，請使用「清除所有時段」按鈕</li>
-              <li>可以使用下方的批量操作按鈕快速選擇</li>
-          </ul>
-      </div>
-
-      <div class="batch-operations">
-          <button type="button" class="batch-btn select-all" onclick="selectAll()">全選</button>
-          <button type="button" class="batch-btn clear-all" onclick="clearAll()">全部清除</button>
-          <button type="button" class="batch-btn" onclick="selectWeekdays()">只選工作日</button>
-          <button type="button" class="batch-btn" onclick="selectWeekends()">只選週末</button>
-      </div>
-
-      <form method="POST" id="timeForm">
-          <div class="time-grid">
-              <div class="time-header">時間</div>
-              <?php foreach ($weekDates as $day): ?>
-                  <div class="time-header">週<?php echo $day['dayText']; ?><br><?php echo $day['display']; ?></div>
-              <?php endforeach; ?>
-
-              <?php foreach ($timeSlots as $time): ?>
-                  <?php $timeKey = substr($time, 0, 5); ?>
-                  <div class="time-slot time-label"><?php echo $time; ?></div>
-                  <?php foreach ($weekDates as $dayIndex => $day): ?>
-                      <?php
-                      $slotId = $day['dateStr'] . '_' . $timeKey;
-                      $isAlreadySelected = in_array($slotId, $userSelectedSlots);
-                      ?>
-                      <div class="time-slot <?php echo $isAlreadySelected ? 'already-selected' : ''; ?>" 
-                           data-day="<?php echo $dayIndex; ?>"
-                           title="<?php echo $isAlreadySelected ? '已選擇的時段' : '點擊選擇此時段'; ?>">
-                          <?php if ($isAlreadySelected): ?>
-                              <span style="font-size: 12px; color: #856404;">✓ 已選</span>
-                          <?php else: ?>
-                              <input type="checkbox"
-                                  name="time_slots[]"
-                                  value="<?php echo $slotId; ?>"
-                                  onchange="updateSlotStyle(this)">
-                          <?php endif; ?>
-                      </div>
-                  <?php endforeach; ?>
-              <?php endforeach; ?>
-          </div>
-
-          <div class="selected-count">
-              目前已有 <span class="count-number"><?php echo count($userSelectedSlots); ?></span> 個時間段 |
-              本次新增 <span class="count-number" id="selected-count">0</span> 個時間段
-          </div>
-
-          <div class="submit-section">
-              <button type="submit" class="submit-btn">新增選擇的時間段</button>
-              <button type="submit" name="clear_all" class="clear-btn" 
-                      onclick="return confirm('確定要清除您在第 <?php echo $selectedWeek; ?> 週的所有時間安排嗎？此操作無法復原！')">
-                  清除所有時段
-              </button>
-              <p style="margin-top: 10px; color: #666; font-size: 14px;">
-                  新選擇的時段將會<strong>添加</strong>到您在第 <?php echo $selectedWeek; ?> 週的現有時間安排中
-              </p>
-          </div>
-      </form>
+  <div class="instructions">
+      <h3>📋 填寫說明</h3>
+      <ul>
+          <li>選擇日期期間（開始日期到結束日期）</li>
+          <li>選擇時間範圍（開始時間到結束時間）</li>
+          <li>點擊「生成時間表格」按鈕生成可選時段</li>
+          <li>使用 checkbox 選擇您有空的時段</li>
+          <li>黃色背景表示您已經選過的時段（無法重複選擇）</li>
+      </ul>
   </div>
 
-  <script>
-      function updateSlotStyle(checkbox) {
-          const slot = checkbox.parentElement;
-          if (checkbox.checked) {
-              slot.classList.add('selected');
+  <form method="POST" id="timeForm">
+      <div class="date-time-selector">
+          <div class="selector-row">
+              <label for="start-date">開始日期：</label>
+              <select id="start-date">
+                  <option value="">請選擇開始日期</option>
+                  <?php foreach ($futureDates as $date): ?>
+                      <option value="<?php echo $date['dateStr']; ?>">
+                          <?php echo $date['fullDisplay']; ?>
+                      </option>
+                  <?php endforeach; ?>
+              </select>
+          </div>
+          
+          <div class="selector-row">
+              <label for="end-date">結束日期：</label>
+              <select id="end-date">
+                  <option value="">請選擇結束日期</option>
+                  <?php foreach ($futureDates as $date): ?>
+                      <option value="<?php echo $date['dateStr']; ?>">
+                          <?php echo $date['fullDisplay']; ?>
+                      </option>
+                  <?php endforeach; ?>
+              </select>
+          </div>
+          
+          <div class="selector-row">
+              <label for="start-time">開始時間：</label>
+              <select id="start-time">
+                  <option value="">請選擇開始時間</option>
+                  <?php foreach ($timeOptions as $time): ?>
+                      <option value="<?php echo substr($time, 0, 2); ?>">
+                          <?php echo $time; ?>
+                      </option>
+                  <?php endforeach; ?>
+              </select>
+          </div>
+          
+          <div class="selector-row">
+              <label for="end-time">結束時間：</label>
+              <select id="end-time">
+                  <option value="">請選擇結束時間</option>
+                  <?php foreach ($timeOptions as $time): ?>
+                      <option value="<?php echo substr($time, 0, 2); ?>">
+                          <?php echo $time; ?>
+                      </option>
+                  <?php endforeach; ?>
+              </select>
+          </div>
+          
+          <button type="button" class="generate-btn" onclick="generateTimeTable()" id="generate-button" disabled>
+              生成時間表格
+          </button>
+      </div>
+
+      <div class="time-table-container" id="time-table-container">
+          <h3>時間選擇表格：</h3>
+          <div id="time-table-wrapper"></div>
+          
+          <div class="table-legend">
+              <div class="legend-item">
+                  <div class="legend-color available"></div>
+                  <span>可選擇</span>
+              </div>
+              <div class="legend-item">
+                  <div class="legend-color existing"></div>
+                  <span>已選過</span>
+              </div>
+          </div>
+          
+          <div class="batch-operations">
+              <button type="button" class="batch-btn select-all" onclick="selectAllAvailable()">選擇所有可用時段</button>
+              <button type="button" class="batch-btn clear-selection" onclick="clearSelection()">清除選擇</button>
+          </div>
+      </div>
+
+      <div class="selected-count" id="selected-count-display" style="display: none;">
+          已選擇 <span class="count-number" id="selected-count">0</span> 個時間段
+      </div>
+
+      <div class="submit-section" id="submit-section" style="display: none;">
+          <button type="submit" class="submit-btn">提交選擇的時間段</button>
+          <button type="submit" name="clear_all" class="clear-btn" 
+                  onclick="return confirm('確定要清除您的所有時間安排嗎？此操作無法復原！')">
+              清除所有時段
+          </button>
+      </div>
+  </form>
+</div>
+
+<script>
+  const existingSlots = <?php echo json_encode($userSelectedSlots ?? []); ?>;
+  let currentTableData = [];
+
+  // 監聽下拉選單變化
+  document.getElementById('start-date').addEventListener('change', checkGenerateButton);
+  document.getElementById('end-date').addEventListener('change', checkGenerateButton);
+  document.getElementById('start-time').addEventListener('change', checkGenerateButton);
+  document.getElementById('end-time').addEventListener('change', checkGenerateButton);
+
+  function checkGenerateButton() {
+      const startDate = document.getElementById('start-date').value;
+      const endDate = document.getElementById('end-date').value;
+      const startTime = document.getElementById('start-time').value;
+      const endTime = document.getElementById('end-time').value;
+      const generateButton = document.getElementById('generate-button');
+      
+      if (startDate && endDate && startTime && endTime) {
+          // 檢查日期和時間的邏輯性
+          if (new Date(startDate) <= new Date(endDate) && parseInt(startTime) < parseInt(endTime)) {
+              generateButton.disabled = false;
           } else {
-              slot.classList.remove('selected');
+              generateButton.disabled = true;
           }
-          updateSelectedCount();
+      } else {
+          generateButton.disabled = true;
+      }
+  }
+
+  function generateTimeTable() {
+      const startDate = document.getElementById('start-date').value;
+      const endDate = document.getElementById('end-date').value;
+      const startTime = parseInt(document.getElementById('start-time').value);
+      const endTime = parseInt(document.getElementById('end-time').value);
+      
+      if (!startDate || !endDate || isNaN(startTime) || isNaN(endTime)) {
+          alert('請完整選擇日期和時間範圍');
+          return;
+      }
+      
+      if (new Date(startDate) > new Date(endDate)) {
+          alert('結束日期不能早於開始日期');
+          return;
+      }
+      
+      if (startTime >= endTime) {
+          alert('結束時間必須晚於開始時間');
+          return;
       }
 
-      function updateSelectedCount() {
-          const checkedBoxes = document.querySelectorAll('input[name="time_slots[]"]:checked');
-          document.getElementById('selected-count').textContent = checkedBoxes.length;
+      // 生成日期範圍
+      const dates = [];
+      const current = new Date(startDate);
+      const end = new Date(endDate);
+      
+      while (current <= end) {
+          const dayNames = ['日', '一', '二', '三', '四', '五', '六'];
+          dates.push({
+              dateStr: current.toISOString().split('T')[0],
+              display: (current.getMonth() + 1) + '/' + current.getDate(),
+              dayName: dayNames[current.getDay()]
+          });
+          current.setDate(current.getDate() + 1);
       }
-
-      function selectAll() {
-          const checkboxes = document.querySelectorAll('input[name="time_slots[]"]');
-          checkboxes.forEach(checkbox => {
-              checkbox.checked = true;
-              updateSlotStyle(checkbox);
+      
+      // 生成時間範圍
+      const times = [];
+      for (let i = startTime; i < endTime; i++) {
+          times.push({
+              hour: i,
+              display: String(i).padStart(2, '0') + ':00-' + String(i + 1).padStart(2, '0') + ':00'
           });
       }
-
-      function clearAll() {
-          const checkboxes = document.querySelectorAll('input[name="time_slots[]"]');
-          checkboxes.forEach(checkbox => {
-              checkbox.checked = false;
-              updateSlotStyle(checkbox);
-          });
-      }
-
-      function selectWeekdays() {
-          clearAll();
-          const checkboxes = document.querySelectorAll('input[name="time_slots[]"]');
-          checkboxes.forEach(checkbox => {
-              const dayIndex = parseInt(checkbox.parentElement.getAttribute('data-day'));
-              if (dayIndex >= 1 && dayIndex <= 5) {
-                  checkbox.checked = true;
-                  updateSlotStyle(checkbox);
-              }
-          });
-      }
-
-      function selectWeekends() {
-          clearAll();
-          const checkboxes = document.querySelectorAll('input[name="time_slots[]"]');
-          checkboxes.forEach(checkbox => {
-              const dayIndex = parseInt(checkbox.parentElement.getAttribute('data-day'));
-              if (dayIndex === 6 || dayIndex === 7) {
-                  checkbox.checked = true;
-                  updateSlotStyle(checkbox);
-              }
-          });
-      }
-
-      document.addEventListener('DOMContentLoaded', function() {
-          updateSelectedCount();
+      
+      // 生成表格
+      let tableHTML = '<table class="time-table"><thead><tr><th>時間\\日期</th>';
+      
+      dates.forEach(date => {
+          tableHTML += `<th>${date.display}<br>(週${date.dayName})</th>`;
       });
-  </script>
-</body>
+      
+      tableHTML += '</tr></thead><tbody>';
+      
+      times.forEach(time => {
+          tableHTML += `<tr><td><strong>${time.display}</strong></td>`;
+          
+          dates.forEach(date => {
+              const slotKey = `${date.dateStr}_${time.hour}`;
+              const isExisting = existingSlots.includes(slotKey);
+              
+              if (isExisting) {
+                  tableHTML += `<td class="existing">
+                      <input type="checkbox" disabled checked>
+                      <span class="existing-label">已選過</span>
+                  </td>`;
+              } else {
+                  tableHTML += `<td>
+                      <input type="checkbox" name="time_slots[]" value="${slotKey}" onchange="updateSelectedCount()">
+                  </td>`;
+              }
+          });
+          
+          tableHTML += '</tr>';
+      });
+      
+      tableHTML += '</tbody></table>';
+      
+      document.getElementById('time-table-wrapper').innerHTML = tableHTML;
+      document.getElementById('time-table-container').style.display = 'block';
+      document.getElementById('submit-section').style.display = 'block';
+      
+      updateSelectedCount();
+  }
 
+  function selectAllAvailable() {
+      const checkboxes = document.querySelectorAll('input[type="checkbox"]:not([disabled])');
+      checkboxes.forEach(checkbox => {
+          checkbox.checked = true;
+      });
+      updateSelectedCount();
+  }
+
+  function clearSelection() {
+      const checkboxes = document.querySelectorAll('input[type="checkbox"]:not([disabled])');
+      checkboxes.forEach(checkbox => {
+          checkbox.checked = false;
+      });
+      updateSelectedCount();
+  }
+
+  function updateSelectedCount() {
+      const checkedBoxes = document.querySelectorAll('input[type="checkbox"]:not([disabled]):checked');
+      const count = checkedBoxes.length;
+      
+      document.getElementById('selected-count').textContent = count;
+      
+      if (count > 0) {
+          document.getElementById('selected-count-display').style.display = 'block';
+      } else {
+          document.getElementById('selected-count-display').style.display = 'none';
+      }
+  }
+</script>
+</body>
 </html>
