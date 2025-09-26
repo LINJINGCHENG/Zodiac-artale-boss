@@ -64,7 +64,7 @@ function getCustomWeekNumber($date = null)
 
 
 // 獲取當前週數和所有週數
-$currentWeek = getCustomWeekNumber($today);
+$currentWeek = getCustomWeekNumber();
 
 // 從資料庫獲取現有週數
 $existingWeeks = $pdo->query("SELECT DISTINCT week_number FROM time_slots ORDER BY week_number")->fetchAll(PDO::FETCH_COLUMN);
@@ -908,9 +908,7 @@ $jsTimeSlots = json_encode($timeSlots);
                         $weekLabel .= " (無資料)";
                     }
                     ?>
-
-                    <option value="<?php echo $week; ?>"
-                        <option value="<?php echo $week; ?>" <?php echo $selectedWeek == $week ? 'selected' : ''; ?>>
+                    <option value="<?php echo $week; ?>" <?php echo $selectedWeek == $week ? 'selected' : ''; ?>>
                         <?php echo $weekLabel; ?>
                     </option>
                 <?php endforeach; ?>
@@ -1191,50 +1189,85 @@ $jsTimeSlots = json_encode($timeSlots);
         const currentUserId = <?php echo $currentUserId; ?>;
 
         let currentStep = 1;
+        let teamToDelete = null;
 
-        // 步驟控制函數
+        // 步驟控制函數 - 移到最前面確保先定義
         function nextStep(step) {
+            console.log('nextStep called with step:', step);
+
             // 驗證當前步驟
             if (!validateStep(step)) {
                 return;
             }
 
             // 隱藏當前步驟
-            document.getElementById('step' + step).classList.remove('active');
-            document.getElementById('step' + step + '-indicator').classList.remove('active');
-            document.getElementById('step' + step + '-indicator').classList.add('completed');
+            const currentStepElement = document.getElementById('step' + step);
+            const currentIndicator = document.getElementById('step' + step + '-indicator');
+
+            if (currentStepElement) {
+                currentStepElement.classList.remove('active');
+            }
+            if (currentIndicator) {
+                currentIndicator.classList.remove('active');
+                currentIndicator.classList.add('completed');
+            }
 
             // 顯示下一步驟
             currentStep = step + 1;
-            document.getElementById('step' + currentStep).classList.add('active');
-            document.getElementById('step' + currentStep + '-indicator').classList.add('active');
+            const nextStepElement = document.getElementById('step' + currentStep);
+            const nextIndicator = document.getElementById('step' + currentStep + '-indicator');
+
+            if (nextStepElement) {
+                nextStepElement.classList.add('active');
+            }
+            if (nextIndicator) {
+                nextIndicator.classList.add('active');
+            }
         }
 
         function prevStep(step) {
+            console.log('prevStep called with step:', step);
+
             // 隱藏當前步驟
-            document.getElementById('step' + step).classList.remove('active');
-            document.getElementById('step' + step + '-indicator').classList.remove('active');
+            const currentStepElement = document.getElementById('step' + step);
+            const currentIndicator = document.getElementById('step' + step + '-indicator');
+
+            if (currentStepElement) {
+                currentStepElement.classList.remove('active');
+            }
+            if (currentIndicator) {
+                currentIndicator.classList.remove('active');
+            }
 
             // 顯示上一步驟
             currentStep = step - 1;
-            document.getElementById('step' + currentStep).classList.add('active');
-            document.getElementById('step' + currentStep + '-indicator').classList.add('active');
-            document.getElementById('step' + currentStep + '-indicator').classList.remove('completed');
+            const prevStepElement = document.getElementById('step' + currentStep);
+            const prevIndicator = document.getElementById('step' + currentStep + '-indicator');
+
+            if (prevStepElement) {
+                prevStepElement.classList.add('active');
+            }
+            if (prevIndicator) {
+                prevIndicator.classList.add('active');
+                prevIndicator.classList.remove('completed');
+            }
         }
 
         // 驗證步驟
         function validateStep(step) {
+            console.log('validateStep called with step:', step);
+
             switch (step) {
                 case 1:
-                    const teamName = document.getElementById('team_name').value.trim();
-                    if (!teamName) {
+                    const teamName = document.getElementById('team_name');
+                    if (!teamName || !teamName.value.trim()) {
                         alert('請輸入團隊名稱');
                         return false;
                     }
                     break;
                 case 2:
-                    const selectedDate = document.getElementById('selected_date').value;
-                    if (!selectedDate) {
+                    const selectedDate = document.getElementById('selected_date');
+                    if (!selectedDate || !selectedDate.value) {
                         alert('請選擇日期');
                         return false;
                     }
@@ -1251,72 +1284,36 @@ $jsTimeSlots = json_encode($timeSlots);
             return true;
         }
 
-        // 團隊刪除相關函數
-        let teamToDelete = null;
-
-        function confirmDeleteTeam(teamId, teamName) {
-            teamToDelete = teamId;
-            document.getElementById('confirmDeleteMessage').innerHTML =
-                `確定要刪除團隊「<strong>${teamName}</strong>」嗎？<br><br>此操作將會：<br>• 刪除團隊資訊<br>• 移除所有團隊成員關聯<br>• <span style="color: #dc3545;">此操作無法復原</span>`;
-            document.getElementById('confirmDeleteDialog').style.display = 'flex';
-        }
-
-        function executeDeleteTeam() {
-            if (teamToDelete) {
-                document.getElementById('deleteTeamId').value = teamToDelete;
-                document.getElementById('deleteTeamForm').submit();
-            }
-        }
-
-        function cancelDeleteTeam() {
-            teamToDelete = null;
-            document.getElementById('confirmDeleteDialog').style.display = 'none';
-        }
-
-        // 點擊對話框外部關閉
-        document.addEventListener('DOMContentLoaded', function() {
-            const dialog = document.getElementById('confirmDeleteDialog');
-            if (dialog) {
-                dialog.addEventListener('click', function(e) {
-                    if (e.target === this) {
-                        cancelDeleteTeam();
-                    }
-                });
-            }
-
-            // ESC 鍵關閉對話框
-            document.addEventListener('keydown', function(e) {
-                if (e.key === 'Escape') {
-                    cancelDeleteTeam();
-                }
-            });
-        });
-
         // 載入時間段選項
         function loadTimeSlots() {
-            const selectedDate = document.getElementById('selected_date').value;
+            console.log('loadTimeSlots called');
+
+            const selectedDate = document.getElementById('selected_date');
             const timeSlotsContainer = document.getElementById('time-slots-list');
 
-            if (!selectedDate) {
-                timeSlotsContainer.innerHTML = '<p>請先選擇日期</p>';
+            if (!selectedDate || !selectedDate.value) {
+                if (timeSlotsContainer) {
+                    timeSlotsContainer.innerHTML = '<p>請先選擇日期</p>';
+                }
                 return;
             }
 
+            const selectedDateValue = selectedDate.value;
             let html = '';
             let hasAvailableSlots = false;
 
             timeSlots.forEach(timeSlot => {
                 const timeKey = timeSlot.substring(0, 5); // 取得 HH:MM 格式
-                const slotId = selectedDate + '_' + timeKey;
+                const slotId = selectedDateValue + '_' + timeKey;
 
                 if (usersBySlot[slotId] && usersBySlot[slotId].length > 0) {
                     hasAvailableSlots = true;
                     html += `
-                        <label>
-                            <input type="checkbox" name="selected_time_slots[]" value="${timeKey}">
-                            ${timeSlot} (${usersBySlot[slotId].length} 人可用)
-                        </label>
-                    `;
+              <label>
+                  <input type="checkbox" name="selected_time_slots[]" value="${timeKey}">
+                  ${timeSlot} (${usersBySlot[slotId].length} 人可用)
+              </label>
+          `;
                 }
             });
 
@@ -1324,27 +1321,35 @@ $jsTimeSlots = json_encode($timeSlots);
                 html = '<p class="alert info">該日期沒有任何可用的時間段</p>';
             }
 
-            timeSlotsContainer.innerHTML = html;
+            if (timeSlotsContainer) {
+                timeSlotsContainer.innerHTML = html;
+            }
         }
 
         // 載入可用成員
         function loadAvailableUsers() {
-            const selectedDate = document.getElementById('selected_date').value;
+            console.log('loadAvailableUsers called');
+
+            const selectedDate = document.getElementById('selected_date');
             const selectedTimeSlots = Array.from(document.querySelectorAll('input[name="selected_time_slots[]"]:checked'))
                 .map(cb => cb.value);
             const usersContainer = document.getElementById('available-users-list');
 
-            if (!selectedDate || selectedTimeSlots.length === 0) {
-                usersContainer.innerHTML = '<p>請先選擇日期和時間段</p>';
+            if (!selectedDate || !selectedDate.value || selectedTimeSlots.length === 0) {
+                if (usersContainer) {
+                    usersContainer.innerHTML = '<p>請先選擇日期和時間段</p>';
+                }
                 return;
             }
+
+            const selectedDateValue = selectedDate.value;
 
             // 找出在所有選中時間段都有空的用戶
             let availableUsers = new Map();
             let isFirstSlot = true;
 
             selectedTimeSlots.forEach(timeSlot => {
-                const slotId = selectedDate + '_' + timeSlot;
+                const slotId = selectedDateValue + '_' + timeSlot;
 
                 if (usersBySlot[slotId]) {
                     if (isFirstSlot) {
@@ -1372,20 +1377,68 @@ $jsTimeSlots = json_encode($timeSlots);
                 availableUsers.forEach(user => {
                     const isCurrentUser = user.account_id == currentUserId;
                     html += `
-                        <label>
-                            <input type="checkbox" name="selected_users[]" value="${user.user_id}">
-                            ${user.name}
-                            ${isCurrentUser ? '<span class="user-badge">您</span>' : ''}
-                        </label>
-                    `;
+              <label>
+                  <input type="checkbox" name="selected_users[]" value="${user.user_id}">
+                  ${user.name}
+                  ${isCurrentUser ? '<span class="user-badge">您</span>' : ''}
+              </label>
+          `;
                 });
             }
 
-            usersContainer.innerHTML = html;
+            if (usersContainer) {
+                usersContainer.innerHTML = html;
+            }
+        }
+
+        // 團隊刪除相關函數
+        function confirmDeleteTeam(teamId, teamName) {
+            console.log('confirmDeleteTeam called:', teamId, teamName);
+
+            teamToDelete = teamId;
+            const messageElement = document.getElementById('confirmDeleteMessage');
+            const dialogElement = document.getElementById('confirmDeleteDialog');
+
+            if (messageElement) {
+                messageElement.innerHTML =
+                    `確定要刪除團隊「<strong>${teamName}</strong>」嗎？<br><br>此操作將會：<br>• 刪除團隊資訊<br>• 移除所有團隊成員關聯<br>• <span style="color: #dc3545;">此操作無法復原</span>`;
+            }
+
+            if (dialogElement) {
+                dialogElement.style.display = 'flex';
+            }
+        }
+
+        function executeDeleteTeam() {
+            console.log('executeDeleteTeam called');
+
+            if (teamToDelete) {
+                const deleteTeamIdElement = document.getElementById('deleteTeamId');
+                const deleteTeamFormElement = document.getElementById('deleteTeamForm');
+
+                if (deleteTeamIdElement) {
+                    deleteTeamIdElement.value = teamToDelete;
+                }
+                if (deleteTeamFormElement) {
+                    deleteTeamFormElement.submit();
+                }
+            }
+        }
+
+        function cancelDeleteTeam() {
+            console.log('cancelDeleteTeam called');
+
+            teamToDelete = null;
+            const dialogElement = document.getElementById('confirmDeleteDialog');
+            if (dialogElement) {
+                dialogElement.style.display = 'none';
+            }
         }
 
         // 全選/取消全選功能（用於刪除功能）
         function toggleAllCheckboxes() {
+            console.log('toggleAllCheckboxes called');
+
             const checkboxes = document.querySelectorAll('input[name="delete_slots[]"]');
             const allChecked = Array.from(checkboxes).every(cb => cb.checked);
 
@@ -1396,6 +1449,8 @@ $jsTimeSlots = json_encode($timeSlots);
 
         // 確認刪除對話框
         function confirmDelete() {
+            console.log('confirmDelete called');
+
             const selectedSlots = document.querySelectorAll('input[name="delete_slots[]"]:checked');
             if (selectedSlots.length === 0) {
                 alert('請選擇要刪除的時段');
@@ -1408,15 +1463,37 @@ $jsTimeSlots = json_encode($timeSlots);
 
         // 頁面載入時初始化
         document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM Content Loaded');
+            console.log('用戶資料:', usersBySlot);
+            console.log('當前用戶ID:', currentUserId);
+
             // 如果是團隊模式，確保步驟指示器正確顯示
             if (document.getElementById('step1')) {
                 currentStep = 1;
+                console.log('團隊模式初始化完成');
             }
 
-            // 添加頁面載入完成的除錯資訊
-            console.log('頁面載入完成');
-            console.log('用戶資料:', usersBySlot);
-            console.log('當前用戶ID:', currentUserId);
+            // 添加對話框點擊外部關閉功能
+            const dialog = document.getElementById('confirmDeleteDialog');
+            if (dialog) {
+                dialog.addEventListener('click', function(e) {
+                    if (e.target === this) {
+                        cancelDeleteTeam();
+                    }
+                });
+            }
+
+            // ESC 鍵關閉對話框
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') {
+                    cancelDeleteTeam();
+                }
+            });
+
+            // 測試函數是否正確定義
+            console.log('nextStep function defined:', typeof nextStep === 'function');
+            console.log('prevStep function defined:', typeof prevStep === 'function');
+            console.log('validateStep function defined:', typeof validateStep === 'function');
         });
     </script>
 </body>
