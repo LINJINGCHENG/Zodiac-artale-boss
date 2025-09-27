@@ -46,11 +46,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['login'])) {
 
 <!DOCTYPE html>
 <html lang="zh-TW">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>拉圖斯時間調查 - 登入</title>
-    <link rel="stylesheet" type="text/css" href="css/loginStyle.css">    
+    <link rel="stylesheet" type="text/css" href="css/loginStyle.css"> 
 </head>
 
 <body>
@@ -84,4 +85,5 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['login'])) {
         </div>
     </div>
 </body>
+
 </html>

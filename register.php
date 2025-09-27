@@ -69,8 +69,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['register'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>拉圖斯時間調查 - 註冊</title>
-    <link rel="stylesheet" type="text/css" href="css/registerStyle.css">  
+    <link rel="stylesheet" type="text/css" href="css/registerStyle.css"> 
 </head>
+
 <body>
     <div class="register-container">
         <div class="logo">

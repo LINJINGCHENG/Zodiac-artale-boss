@@ -13,13 +13,13 @@
             justify-content: center;
         }
 
-        .register-container {
+        .container {
             background: white;
             padding: 40px;
             border-radius: 10px;
             box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
             width: 100%;
-            max-width: 400px;
+            max-width: 450px;
         }
 
         .logo {
@@ -31,6 +31,29 @@
             color: #333;
             margin: 0;
             font-size: 24px;
+        }
+
+        .logo p {
+            color: #666;
+            margin: 10px 0 0 0;
+            font-size: 14px;
+        }
+
+        .form-container {
+            margin-bottom: 20px;
+        }
+
+        .form-container h2 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 20px;
+        }
+
+        .form-description {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 25px;
+            line-height: 1.5;
         }
 
         .form-group {
@@ -70,10 +93,15 @@
             font-size: 16px;
             cursor: pointer;
             transition: transform 0.2s;
+            margin-bottom: 10px;
         }
 
         .btn:hover {
             transform: translateY(-2px);
+        }
+
+        .btn.secondary {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
         }
 
         .alert {
@@ -95,9 +123,48 @@
             border: 1px solid #d6e9c6;
         }
 
+        .result-container {
+            margin-bottom: 20px;
+        }
+
+        .result-container .alert h3 {
+            margin: 0 0 10px 0;
+            font-size: 18px;
+        }
+
+        .result-container .alert p {
+            margin: 10px 0;
+            font-size: 16px;
+        }
+
+        .result-container .btn {
+            width: auto;
+            margin: 5px;
+            padding: 8px 20px;
+            display: inline-block;
+        }
+
+        .form-switch {
+            text-align: center;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+        }
+
+        .form-switch a {
+            color: #667eea;
+            text-decoration: none;
+        }
+
+        .form-switch a:hover {
+            text-decoration: underline;
+        }
+
         .login-link {
             text-align: center;
             margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
         }
 
         .login-link a {
@@ -115,65 +182,59 @@
             margin-top: 5px;
         }
 
-        .password-field {
-            position: relative;
+        /* 載入動畫 */
+        .loading {
+            opacity: 0.6;
+            pointer-events: none;
         }
 
-        .toggle-password {
-            position: absolute;
-            right: 15px;
-            top: 50%;
-            transform: translateY(-50%);
-            cursor: pointer;
-            color: #666;
-            font-size: 18px;
+        .loading .btn {
+            background: #ccc;
+            cursor: not-allowed;
         }
 
-        .password-strength {
-            margin-top: 10px;
-            padding: 10px;
-            background: #f8f9fa;
-            border-radius: 5px;
-            font-size: 14px;
+        /* 淡入淡出動畫 */
+        .fade-in {
+            animation: fadeIn 0.3s ease-in;
         }
 
-        .strength-indicator {
-            display: flex;
-            align-items: center;
-            margin-bottom: 8px;
+        .fade-out {
+            animation: fadeOut 0.3s ease-out;
         }
 
-        .strength-level {
-            font-weight: bold;
-            margin-left: 10px;
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
-        .weak {
-            color: #dc3545
+        @keyframes fadeOut {
+            from {
+                opacity: 1;
+                transform: translateY(0);
+            }
+
+            to {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
         }
 
-        .medium {
-            color: #ffc107
-        }
+        /* 響應式設計 */
+        @media (max-width: 480px) {
+            .container {
+                padding: 20px;
+                margin: 20px;
+            }
 
-        .strong {
-            color: #28a745
-        }
-
-        .requirements li {
-            margin: 5px 0;
-            padding-left: 20px;
-            position: relative;
-        }
-
-        .requirements li:before {
-            content: "X";
-            position: absolute;
-            left: 0;
-            color: #dc3545;
-        }
-
-        .requirements li.valid:before {
-            content: "✓";
-            color: #28a745;
+            .result-container .btn {
+                width: 100%;
+                margin: 5px 0;
+            }
         }
